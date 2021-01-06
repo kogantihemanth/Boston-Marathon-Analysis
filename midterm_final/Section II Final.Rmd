@@ -1,0 +1,1283 @@
+---
+title: "Section I and II"
+author: "Team Y-Axis?"
+date: "10/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+```
+
+## Summary
+
+Our group chose to analyze data from the Boston Marathon in 2015-2017.  Most of our work focuses on 2017, but we conducted analysis across all three years of data.  The total size of the dataset is about 26,000 rows with 25 fields for each year.  Fields include demographic information (age, gender, hometown and/or country) for each runner, the finishing time for each runner, and periodic times runners reached certain milestones along the course.  
+
+For a more detailed overview of our data, please see section III.
+
+## Overarching SMART Question
+
+Our group was interested in determining what makes a runner fast based on the data we have?  How much role, if any, does gender, age, past runnings of Boston, nationality, or home state determine a runners finial finishing time?  To answer this, our team broke this question into the following component pieces.
+
+* Analysis of gender (Kay)
+
+* Analysis of age (Hemanth)
+
+* Analysis of past races (Akhil)
+
+* Analysis of nationality (Ruijin)
+
+* Analysis of home state (Patrick)
+
+## Data Dictionary
+
+Looks like there are several fields we do not need or are blanck throughout the dataset.  Let’s see what each column is doing:
+
+* X: A unique id for each observation
+
+* Bib: The bib for the runner.  This is the number the runner wears on race day.  There usually is some structure here such as "elite runners" getting low bib numbers.  We can leave this as a factor because there are some bib numbers that are both letters and numbers. (See note at bottom on bib numbers.)
+
+* Name: Runner's name.  There are some repeat names here.
+
+* Age: Runner's age.  Makes sense as an int.
+
+* M.F: Male or female.  Makes sense as factor.
+
+* City: City as submitted by the runner.
+
+* State: State as submitted by the runner.  There are 69 total unique values for states, and 3595 are blank.  
+
+* Country: Country as submitted by the runner.  There are 91 total unique values with no blanks.  20,945 runners are from USA, the largest country represented.
+
+* Citizen: Citizenship as submitted by the runner.
+
+* X.1: Unclear.  Looks like there are less than a hundred entries that appear to be states.  Recommend dropping.
+
+* X5K - X40K: Times at different points along the race course.  Of note, "Half" is 13.1 miles, and represents 21.08 km.
+
+* Pace: An interesting speed construct.  It is the total minutes:seconds to complete one mile.  Equal to total time divided by total miles.
+
+* Proj Time: This value is '1' for all runners.  Recommend drop.
+
+* Official.Time: The final time for the runner.
+
+* Overall: Rank amongst all finishers.
+
+* Gender: Rank in gender (2 categories).
+
+* Division: Rank in age/gender division (20 categories).
+
+Note on Bib Numbers
+Bib numbers are given out in ranges based on the runner's fastest qualifying time.  Below is the info for 2017 (http://registration.baa.org/2017/cf/Public/iframe_EntryLists.cfm):
+
+Bib numbers are color coded. Red bibs (numbers 101 to 7,700) are assigned to Wave 1 (10:00 a.m.). White bibs (numbers 8,000 to 15,600) are assigned to Wave 2 (10:25 a.m.). Blue bibs (numbers 16,000 to 23,600) are assigned to Wave 3 (10:50 a.m.) Yellow bibs (numbers 24,000 to 32,500) are assigned to Wave 4 (11:15 a.m.).  The break between Wave 1 (10:00 a.m. start time) and Wave 2 (10:25 a.m. start time) is 3:10:43. The break between Wave 2 and Wave 3 (10:50 a.m. start time) is 3:29:27. The break between Wave 3 and Wave 4 (11:15 a.m. start time) is 3:57:18.
+
+## Analysis of Gender and Age
+
+```{r include=F}
+# This function will allow any user to install the required packages if they are already not installed.
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+
+loadPkg('lubridate') # used from time conversions
+loadPkg('dplyr') # varios data transfers
+loadPkg('ggplot2') # plotting and mapping
+loadPkg('usmap') # making chloropleths
+loadPkg("stats")
+loadPkg("faraway") #vif
+loadPkg("corrplot")
+```
+
+### SMART Questions
+
+* Do men and women perform differently? Are they different in age? Are these differences statistically significant?
+
+* Is there relationship between performace at half time (minutes it take to get to half) and official time (time it take to finish the race)?
+
+* Does your performace at each quarter of the race (rank at each quarter, only looking at time it take to run that quarter) impact your final rank?
+
+#### Do men and women perform differently? Are their age different?
+```{r, echo=FALSE, include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+str(bm_2017)
+```
+
+
+```{r convering time in X:XX:XX format to minutes (in number)}
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get actual minutes ran
+```
+
+```{r Some descriptive Data}
+#Gender
+gender.table <- table(bm_2017$M.F)
+gender.freq <- as.data.frame(gender.table)
+female.freq <- subset(gender.freq, Var1=="F")
+male.freq <- subset(gender.freq, Var1=="M")
+
+#Official Time by Gender
+group_by(bm_2017, M.F) %>%
+  summarise(
+    count = n(),
+    mean = mean(Official.Time.Min, na.rm = TRUE),
+    sd = sd(Official.Time.Min, na.rm = TRUE)
+  )
+
+```
+
+```{r Boxplot gender_official time, include=T}
+boxplot(Official.Time.Min ~ M.F, data=bm_2017,
+        ylab="Official Time in Minutes", xlab="Gender",
+        main="Official Time by Gender", col=c("#00AFBB", "#E7B800"))
+
+boxplot(Age ~ M.F, data=bm_2017,
+        ylab="Age (years)", xlab="Gender",
+        main="Age by Gender", col=c("light pink", "light green"))
+```
+
+* There are 11972 female and 14438 male participants in the data frame.
+
+```{r T-test for age by gender}
+bm_2017<- na.omit(bm_2017)
+bm_2017$M.F <- as.factor(bm_2017$M.F)
+OTGenderAge.ttest <- t.test(Age ~ M.F, data = bm_2017)
+OTGenderAge.ttest
+```
+* Women's age (x=39.9) is siginificantly different from men's age (x=44.8) (p<0.001).
+
+```{r T-test for average running time by gender}
+bm_2017<- na.omit(bm_2017)
+bm_2017$M.F <- as.factor(bm_2017$M.F)
+OTGender.ttest <- t.test(Official.Time.Min ~ M.F, data = bm_2017)
+OTGender.ttest
+```
+* Women's average oficial time (x=249) is siginificantly different from men's average official time (x=229) (p<0.001).
+
+```{r T-test for average half time by gender}
+#Half time variable converted to minutes in number
+bm_2017$Half <- as.character(bm_2017$Half)
+bm_2017$Half.Min <- period_to_seconds(hms(bm_2017$Half))/60
+
+HTGender.ttest <- t.test(Half.Min ~ M.F, data = bm_2017)
+HTGender.ttest
+names(HTGender.ttest)
+```
+* Women's average half time (x=117) is siginificantly different from men's average half time (x=105), p<0.001).
+
+#### Can half time predict official time?
+```{r half time correlation to official time - simple linear model}
+model.OfficialHalf <- lm(Official.Time.Min ~ Half.Min, data=bm_2017)
+summary(model.OfficialHalf)
+coef(model.OfficialHalf)
+confint(model.OfficialHalf)
+```
+* In a model exploring half time's relationship with official time, slope/intercept value is -3.04 and is significant (p<.001). One minute increase in Half Time positively impacts (+2.18) Official Time (p<0.001). Adjusted R squared is high at 0.894.
+
+#### Can age predict official time?
+```{r Age correlation to official time}
+model.OfficialAge <- lm(Official.Time.Min ~ Age, data=bm_2017)
+summary(model.OfficialAge)
+coef(model.OfficialAge)
+confint(model.OfficialAge)
+```
+* In a model exploring the participants age in relationship with official time, slope/intercept value is 202.66 and is significant (p<.001). One year increase in age increases 0.8313 minute Official Time (p<0.001). Adjusted R squared is low at 0.0507.
+
+#### Do ranks during each quarter of the race predict overall rank? Which quarter is the best predictor for the overall rank?
+```{r Ranks at each interval (in 4 quarters)}
+#creating intervals of time
+bm_2017$X10K <- as.character(bm_2017$X10K)
+bm_2017$X10K.Min <- period_to_seconds(hms(bm_2017$X10K))/60
+bm_2017$X20K <- as.character(bm_2017$X20K)
+bm_2017$X20K.Min <- period_to_seconds(hms(bm_2017$X20K))/60
+bm_2017$X30K <- as.character(bm_2017$X30K)
+bm_2017$X30K.Min <- period_to_seconds(hms(bm_2017$X30K))/60
+bm_2017$X40K <- as.character(bm_2017$X40K)
+bm_2017$X40K.Min <- period_to_seconds(hms(bm_2017$X40K))/60 #Did not end up using this one
+
+bm_2017$X0.10K.Min <- bm_2017$X10K.Min #time between 0-10K
+bm_2017$X10.20K.Min <- bm_2017$X20K.Min-bm_2017$X10K.Min #time between 10-20K
+bm_2017$X20.30K.Min <- bm_2017$X30K.Min-bm_2017$X20K.Min #time between 20-30K
+bm_2017$X30.42K.Min <- bm_2017$Official.Time.Min-bm_2017$X30K.Min #time between 30-42.195K (end)
+
+bm_2017$X0.10K.Rank <- rank(bm_2017$X0.10K.Min) #rank during first quarter 0-10K
+bm_2017$X10.20K.Rank <- rank(bm_2017$X10.20K.Min) #rank during second quarter 10-20K
+bm_2017$X20.30K.Rank <- rank(bm_2017$X20.30K.Min) #rank during third quarter 20-30K
+bm_2017$X30.42K.Rank <- rank(bm_2017$X30.42K.Min) #rank during last quarter 30-42.195K
+
+#Cor matrix and plot
+str(bm_2017)
+Ranks <- c("Overall", "X0.10K.Rank", "X10.20K.Rank", "X20.30K.Rank", "X30.42K.Rank")
+bm_2017.Ranks <- bm_2017[Ranks]
+
+RanksCor = cor(bm_2017.Ranks) # creating correlation matrix between all ranks.
+```
+
+```{r Ranks Cor matrix and plots, include=T}
+corrplot(RanksCor, method = "number")
+```
+
+```{r Overall rank ~ ranks at each interval}
+model.RankInterval <- lm(Overall ~ X0.10K.Rank+X10.20K.Rank+X20.30K.Rank+X30.42K.Rank, data=bm_2017)
+summary(model.RankInterval)
+vif(model.RankInterval)
+```
+* In a model exploring relationship between Rank at various intervals of race (0-10K, 10-20K, 20-30K, 30-42.195K) and Overall Rank, slope/intercept value is -.0686 and is significant (p<.001).
+* One rank increase during the first quarter of the race (0-10K) impacts (+0.186) overall rank (p<0.001). One rank increase during the second quarter of the race (10-20K) increases (+0.175) overall rank (p<0.001). One rank increase during the third quarter of the race (20-30K) increases (+0.291) overall rank (p<0.001). And the final quarter seems to have the highest impact on the overall rank; one rank increase during the last quarter of the race (30-40K) increases (+0.400) overall rank (p<0.001).
+* Adjusted R squared is high at 0.99.
+There is concerning amount of collinearity with rank between 10-20K (vif=23.77) and rank between 20-30K (vif=17.98).
+
+## Additional Analysis of Age
+
+SMART Questions
+
+Are the average finishing times across different age groups differ ?
+
+Are there any trends across different age groups ?
+
+Is Age really a factor in deciding the finishing time of the marathon (Well, this boston marathon) ?
+
+```{r, include=FALSE}
+m2017 <- read.csv('marathon_results_2017.csv')
+m2016 <- read.csv('marathon_results_2016.csv')
+m2015 <- read.csv('marathon_results_2015.csv')
+head(m2017)
+str(m2017)
+str(m2015)
+str(m2016)
+m2017 <- subset(m2017, select = -c(X.1, Proj.Time))
+m2016 <- subset(m2016, select = -c(X, Proj.Time))
+m2015 <- subset(m2015, select = -c(X.1, Proj.Time))
+```
+
+```{r TimeConversionFunction, include=FALSE}
+library(lubridate)
+m2017$Official.Time <- as.character(m2017$Official.Time)
+m2017$Official.Time.Min <- period_to_seconds(hms(m2017$Official.Time))/60
+
+m2016$Official.Time <- as.character(m2016$Official.Time)
+m2016$Official.Time.Min <- period_to_seconds(hms(m2016$Official.Time))/60
+
+m2015$Official.Time <- as.character(m2015$Official.Time)
+m2015$Official.Time.Min <- period_to_seconds(hms(m2015$Official.Time))/60
+```
+
+### Descriptive Statistics :
+
+```{r, include=TRUE, echo=FALSE}
+library(ggplot2)
+ggplot(data = m2017, aes(x = Age)) + geom_histogram(color = 'white',
+                 fill='red', binwidth = 1) + labs(title = "No of runners in different ages for 2017 Boston Marathon")
+```
+
+Let us add a column to the existing dataframe which tells us about the agegroup that particular runner belongs to. We have divided the age groups according to the USATF(USA Track & Field) standard i.e 5 years and also keeping in mind the number of runners in each age group. In 2017 boston marathon, min. age of the participants is `r min(m2017$Age)` and max. age of the participants is `r max(m2017$Age)`.Usually, Marathons and long distance events often use 19 and under as the youngest age group. Following this, we have divided the age groups as 18-24,25-29,30-34,35-39,40-44,45-49,50-54,55-59,60+.
+
+```{r, include=FALSE}
+m2017$agegroup <- NA
+m2017$agegroup[m2017$Age >= 18 & m2017$Age <= 24] <- '18-24'
+m2017$agegroup[m2017$Age >= 25 & m2017$Age <= 29] <- '25-29'
+m2017$agegroup[m2017$Age >= 30 & m2017$Age <= 34] <- '30-34'
+m2017$agegroup[m2017$Age >= 35 & m2017$Age <= 39] <- '35-39'
+m2017$agegroup[m2017$Age >= 40 & m2017$Age <= 44] <- '40-44'
+m2017$agegroup[m2017$Age >= 45 & m2017$Age <= 49] <- '45-49'
+m2017$agegroup[m2017$Age >= 50 & m2017$Age <= 54] <- '50-54'
+m2017$agegroup[m2017$Age >= 55 & m2017$Age <= 59] <- '55-59'
+m2017$agegroup[m2017$Age >= 60] <- '60+'
+m2017$agegroup <- as.factor(m2017$agegroup)
+
+```
+
+Lets visualize the data. First, we look at the total number of runners for each age group.
+
+
+```{r, include=TRUE, echo=FALSE}
+library(ggplot2)
+ggplot(data = m2017, aes(x = agegroup, fill = agegroup)) + geom_histogram(stat="count") + labs(title = 'Number of runners in each age group in Boston Marathon 2017')
+```
+
+As we divided the data according to the no. of runners in each age group as well, there are more than 1000 runners in each age group. Now, lets look at the boxplot of Official run time by age group so that we will get to know the trends across age groups.
+
+
+```{r, include=TRUE, echo=FALSE}
+qplot(agegroup, Official.Time.Min, data = m2017, geom = "boxplot", fill = agegroup,
+           xlab = "Age group", ylab = "Official time in minutes") + labs(title = 'Boxplot of Official run time in minutes by age group')
+```
+
+By looking at the boxplot, we can observe that there isn't much difference in the average running time of age groups from 18-24 till 45-49. Ofcourse the average running times differ from age of 50. And also, distribution of some of the age groups looks same except for few outliers.Boxplot suggests that runners in agegroup 30-34 are faster compared to other agegroups and runners in age group 60+ are the slowest. Now, lets subset the data according to agegroups before we go on to statistical tests.
+
+```{r, include=FALSE}
+m2017_ag1 <- subset(m2017, agegroup == '18-24')
+m2017_ag2 <- subset(m2017, agegroup == '25-29')
+m2017_ag3 <- subset(m2017, agegroup == '30-34')
+m2017_ag4 <- subset(m2017, agegroup == '35-39')
+m2017_ag5 <- subset(m2017, agegroup == '40-44')
+m2017_ag6 <- subset(m2017, agegroup == '45-49')
+m2017_ag7 <- subset(m2017, agegroup == '50-54')
+m2017_ag8 <- subset(m2017, agegroup == '55-59')
+m2017_ag9 <- subset(m2017, agegroup == '60+')
+```
+
+### Test for Normality
+
+Below are the QQ plots for all these subsets to check if they are normal.
+
+```{r, include=TRUE, echo=FALSE}
+qqnorm(m2017_ag1$Official.Time.Min, main='QQ Plot for Runners of Age group 18-24')
+qqline(m2017_ag1$Official.Time.Min)
+
+qqnorm(m2017_ag2$Official.Time.Min, main='QQ Plot for Runners of Age group 25-29')
+qqline(m2017_ag2$Official.Time.Min)
+
+qqnorm(m2017_ag3$Official.Time.Min, main='QQ Plot for Runners of Age group 30-34')
+qqline(m2017_ag3$Official.Time.Min)
+
+qqnorm(m2017_ag4$Official.Time.Min, main='QQ Plot for Runners of Age group 35-39')
+qqline(m2017_ag4$Official.Time.Min)
+
+qqnorm(m2017_ag5$Official.Time.Min, main='QQ Plot for Runners of Age group 40-44')
+qqline(m2017_ag5$Official.Time.Min)
+
+qqnorm(m2017_ag6$Official.Time.Min, main='QQ Plot for Runners of Age group 45-49')
+qqline(m2017_ag6$Official.Time.Min)
+
+qqnorm(m2017_ag7$Official.Time.Min, main='QQ Plot for Runners of Age group 50-54')
+qqline(m2017_ag7$Official.Time.Min)
+
+qqnorm(m2017_ag8$Official.Time.Min, main='QQ Plot for Runners of Age group 55-59')
+qqline(m2017_ag8$Official.Time.Min)
+
+qqnorm(m2017_ag9$Official.Time.Min, main='QQ Plot for Runners of Age group 60+')
+qqline(m2017_ag9$Official.Time.Min)
+```
+
+Lets sample 50 observations from each subset of age groups and bind them together to a new data frame.
+
+
+```{r, include=FALSE}
+set.seed(98452)
+
+sample_ag1 <- m2017_ag1[ sample(nrow(m2017_ag1),50), ]
+sample_ag2 <- m2017_ag2[ sample(nrow(m2017_ag2),50), ]
+sample_ag3 <- m2017_ag3[ sample(nrow(m2017_ag3),50), ]
+sample_ag4 <- m2017_ag4[ sample(nrow(m2017_ag4),50), ]
+sample_ag5 <- m2017_ag5[ sample(nrow(m2017_ag5),50), ]
+sample_ag6 <- m2017_ag6[ sample(nrow(m2017_ag6),50), ]
+sample_ag7 <- m2017_ag7[ sample(nrow(m2017_ag7),50), ]
+sample_ag8 <- m2017_ag8[ sample(nrow(m2017_ag8),50), ]
+sample_ag9 <- m2017_ag9[ sample(nrow(m2017_ag9),50), ]
+sample_ag <- rbind(sample_ag1, sample_ag2, sample_ag3, sample_ag4, sample_ag5, sample_ag6, sample_ag7,sample_ag8, sample_ag9)
+```
+
+### ANOVA
+
+Lets perform ANOVA test to compare the means of the run times across different age groups.
+Null Hypothesis :- There is no significant difference between the means of run times across different age groups i.e in other words, Age has no significant impact in finishing times of runners.
+
+```{r, include=TRUE, echo=FALSE}
+aovags <- aov(data = sample_ag, Official.Time.Min ~ agegroup)
+summary(aovags)
+Fcritical_ags <- qf(p = 0.95, df1 = 8, df2 = 441)
+Fcritical_ags
+```
+
+According to the results of the ANOVA test, pvalue is `r aovags$p.value` which is less than the significant level 0.05. We can formally reject the null hypothesis that there is no difference between the means. Lets take a look at the tukey comparison table to check the mean comparison between different age groups.
+
+```{r, include=TRUE, echo=FALSE }
+tukeyaovags <- TukeyHSD(aovags)
+tukeyaovags
+```
+
+Here, if we take a look at the p values of the age groups comparisons involving agegroups 55-59, 60+ the p-values are less than the significant level and all other age groups have high p values. So, lets omit the age groups 55-59 and 60+ and then see the trend between the remaining age groups. Lets perform anova again for the other age groups.
+
+### ANOVA
+
+Null Hypothesis :- There is no significant difference between the means of run times across different age groups i.e in other words, Age has no significant impact in finishing times of runners.
+
+```{r, include=TRUE, echo=FALSE}
+sample_agb55 <- rbind(sample_ag1, sample_ag2, sample_ag3, sample_ag4, sample_ag5, sample_ag6, sample_ag7)
+aovagsb55 <- aov(data = sample_agb55, Official.Time.Min ~ agegroup)
+summary(aovagsb55)
+Fcritical_agsb55 <- qf(p = 0.95, df1 = 6, df2 = 343)
+Fcritical_agsb55
+```
+
+
+After performing the test, we got a p value of `r aovagsb55$p.value` by which we can accept the null hypothesis that there is no difference between the means.
+
+In conclusion, in boston marathon, if the runner's age is below 55, Age is really not a factor in deciding the finish run time of the marathon.
+
+
+## Analysis of Past Races
+
+SMART Questions
+Which age group is performing better over the years.
+
+Any trends in the Average official time for top four countries with highest number of runners over the three years.
+
+Let’s check whether the means of official time for the year’s 2015, 2016 and 2017 is same.
+
+let’s check whether the performance of the third time runners is better than the first time runners by comparing their average official time in the year 2017.
+
+```{r basicfcn, include=F}
+# can add quietly=T option to the require() function
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+loadPkg('lubridate') # used from time conversions
+library(lubridate)
+loadPkg('dplyr') # various data transfers
+library(dplyr)
+loadPkg('ggplot2') #plotting and mapping
+library(ggplot2)
+loadPkg("BSDA")  #for z-test
+library(BSDA)
+loadPkg("viridis")
+#loadPkg("hrbrthemes")
+loadPkg('countrycode')
+loadPkg('rworldmap')
+```
+
+```{r, echo=FALSE}
+#Importing the marathon results data for the years 2015, 2016, 2017.
+bm_2015 <- read.csv("marathon_results_2015.csv", header = TRUE)
+bm_2016 <- read.csv("marathon_results_2016.csv", header = TRUE)
+bm_2017 <- read.csv("marathon_results_2017.csv", header = TRUE)
+```
+
+```{r, echo=FALSE}
+#Adding year column to the dataset and converting official time column into minutes and dropping the unnecessary columns
+bm_2017$year <- "2017"
+bm_2016$year <- "2016"
+bm_2015$year <- "2015"
+bm_2015$Official.Time <- as.character(bm_2015$Official.Time)
+bm_2015$Official.Time.Min <- period_to_seconds(hms(bm_2015$Official.Time))/60
+bm_2016$Official.Time <- as.character(bm_2016$Official.Time)
+bm_2016$Official.Time.Min <- period_to_seconds(hms(bm_2016$Official.Time))/60
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time)
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60
+bm_2015 <- subset(bm_2015, select =-c(X.1,X,Proj.Time))
+bm_2016 <- subset(bm_2016, select =-c(X, Proj.Time))
+bm_2017 <- subset(bm_2017, select =-c(X.1, X, Proj.Time))
+```
+
+```{r, include=FALSE}
+# summary of the three year's data:
+summary(bm_2015)
+summary(bm_2016)
+summary(bm_2017)
+```
+### From the summary of three year's data, we can observe that the average age of the participants for all the three year's is equal.
+
+
+### Now let divide the age into groups and check which age group is performing better over the years.
+```{r, echo=FALSE, include=T}
+bm_2017$agegroup[bm_2017$Age >= 18 & bm_2017$Age <= 24] <- '18-24'
+bm_2017$agegroup[bm_2017$Age >= 25 & bm_2017$Age <= 29] <- '25-29'
+bm_2017$agegroup[bm_2017$Age >= 30 & bm_2017$Age <= 34] <- '30-34'
+bm_2017$agegroup[bm_2017$Age >= 35 & bm_2017$Age <= 39] <- '35-39'
+bm_2017$agegroup[bm_2017$Age >= 40 & bm_2017$Age <= 44] <- '40-44'
+bm_2017$agegroup[bm_2017$Age >= 45 & bm_2017$Age <= 49] <- '45-49'
+bm_2017$agegroup[bm_2017$Age >= 50 & bm_2017$Age <= 54] <- '50-54'
+bm_2017$agegroup[bm_2017$Age >= 55 & bm_2017$Age <= 59] <- '55-59'
+bm_2017$agegroup[bm_2017$Age >= 60] <- '60+'
+bm_2017$agegroup <- as.factor(bm_2017$agegroup)
+agmean2017 <- aggregate(bm_2017$Official.Time.Min ~ bm_2017$agegroup, FUN=mean)
+names(agmean2017) <- c('agegroup', 'avg.official.time')
+ggplot(agmean2017,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("agegroup")+
+        ylab("Mean official time")+
+        ggtitle("Mean official time for Age groups for the year 2017")
+
+bm_2016$agegroup[bm_2016$Age >= 18 & bm_2016$Age <= 24] <- '18-24'
+bm_2016$agegroup[bm_2016$Age >= 25 & bm_2016$Age <= 29] <- '25-29'
+bm_2016$agegroup[bm_2016$Age >= 30 & bm_2016$Age <= 34] <- '30-34'
+bm_2016$agegroup[bm_2016$Age >= 35 & bm_2016$Age <= 39] <- '35-39'
+bm_2016$agegroup[bm_2016$Age >= 40 & bm_2016$Age <= 44] <- '40-44'
+bm_2016$agegroup[bm_2016$Age >= 45 & bm_2016$Age <= 49] <- '45-49'
+bm_2016$agegroup[bm_2016$Age >= 50 & bm_2016$Age <= 54] <- '50-54'
+bm_2016$agegroup[bm_2016$Age >= 55 & bm_2016$Age <= 59] <- '55-59'
+bm_2016$agegroup[bm_2016$Age >= 60] <- '60+'
+bm_2016$agegroup <- as.factor(bm_2016$agegroup)
+agmean2016 <- aggregate(bm_2016$Official.Time.Min ~ bm_2016$agegroup, FUN=mean)
+names(agmean2016) <- c('agegroup', 'avg.official.time')
+ggplot(agmean2016,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("agegroup")+
+        ylab("Mean official time")+
+        ggtitle("Mean official time for Age groups for the year 2016")
+
+bm_2015$agegroup[bm_2015$Age >= 18 & bm_2015$Age <= 24] <- '18-24'
+bm_2015$agegroup[bm_2015$Age >= 25 & bm_2015$Age <= 29] <- '25-29'
+bm_2015$agegroup[bm_2015$Age >= 30 & bm_2015$Age <= 34] <- '30-34'
+bm_2015$agegroup[bm_2015$Age >= 35 & bm_2015$Age <= 39] <- '35-39'
+bm_2015$agegroup[bm_2015$Age >= 40 & bm_2015$Age <= 44] <- '40-44'
+bm_2015$agegroup[bm_2015$Age >= 45 & bm_2015$Age <= 49] <- '45-49'
+bm_2015$agegroup[bm_2015$Age >= 50 & bm_2015$Age <= 54] <- '50-54'
+bm_2015$agegroup[bm_2015$Age >= 55 & bm_2015$Age <= 59] <- '55-59'
+bm_2015$agegroup[bm_2015$Age >= 60] <- '60+'
+bm_2015$agegroup <- as.factor(bm_2015$agegroup)
+agmean2015 <- aggregate(bm_2015$Official.Time.Min ~ bm_2015$agegroup, FUN=mean)
+names(agmean2015) <- c('agegroup', 'avg.official.time')
+
+ggplot(agmean2015,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("agegroup")+
+        ylab("Mean official time")+
+        ggtitle("Mean official time for Age groups for the year 2015")
+```
+
+From the above three plots, we can observe that 30-34 Age group has the lowest average official time over the years. So, we can conclude that 30-34 Age group people is performing well compared to other Age groups in all the years.
+
+
+
+### Let us see if there is any trend in the Average official time for top four countries with highest number of runners over the three years.
+```{r, echo=F, include=T}
+off.finish.time.mean.2017 <- aggregate(bm_2017$Official.Time.Min ~ bm_2017$Country, FUN=mean)
+names(off.finish.time.mean.2017) <- c('Country', 'avg.official.time')
+Total.runners.2017_country <- aggregate(bm_2017$Name ~ bm_2017$Country,FUN = length)
+names(Total.runners.2017_country) <- c('Country', 'Total.Runners')
+countries_df_2017 <- merge(Total.runners.2017_country, off.finish.time.mean.2017, by='Country')
+countries_df_2017 <- countries_df_2017[order(countries_df_2017$avg.official.time),]
+countries_df_2017$year <- "2017"
+
+country.official_time1 <- joinCountryData2Map(countries_df_2017, joinCode = "ISO3", nameJoinColumn = "Country", mapResolution="coarse")
+mapCountryData(country.official_time1, nameColumnToPlot="avg.official.time",mapTitle="Average official times for countries in 2017 data", catMethod = "pretty", missingCountryCol = gray(.8), colourPalette = "heat")
+
+off.finish.time.mean.2016 <- aggregate(bm_2016$Official.Time.Min ~ bm_2016$Country, FUN=mean)
+names(off.finish.time.mean.2016) <- c('Country', 'avg.official.time')
+Total.runners.2016_country <- aggregate(bm_2016$Name ~ bm_2016$Country,FUN = length)
+names(Total.runners.2016_country) <- c('Country', 'Total.Runners')
+countries_df_2016 <- merge(Total.runners.2016_country, off.finish.time.mean.2016, by='Country')
+countries_df_2016 <- countries_df_2016[order(countries_df_2016$avg.official.time),]
+countries_df_2016$year <- "2016"
+
+country.official_time2 <- joinCountryData2Map(countries_df_2016, joinCode = "ISO3", nameJoinColumn = "Country", mapResolution="coarse")
+mapCountryData(country.official_time2, nameColumnToPlot="avg.official.time",mapTitle="Average official times for countries in 2016 data", catMethod = "pretty", missingCountryCol = gray(.8), colourPalette = "heat")
+
+off.finish.time.mean.2015 <- aggregate(bm_2015$Official.Time.Min ~ bm_2015$Country, FUN=mean)
+names(off.finish.time.mean.2015) <- c('Country', 'avg.official.time')
+Total.runners.2015_country <- aggregate(bm_2015$Name ~ bm_2015$Country,FUN = length)
+names(Total.runners.2015_country) <- c('Country', 'Total.Runners')
+countries_df_2015 <- merge(Total.runners.2015_country, off.finish.time.mean.2015, by='Country')
+countries_df_2015 <- countries_df_2015[order(countries_df_2015$avg.official.time),]
+countries_df_2015$year <- "2015"
+
+country.official_time3 <- joinCountryData2Map(countries_df_2015, joinCode = "ISO3", nameJoinColumn = "Country", mapResolution="coarse")
+mapCountryData(country.official_time3, nameColumnToPlot="avg.official.time",mapTitle="Average official times for countries in 2015 data", catMethod = "pretty", missingCountryCol = gray(.8), colourPalette = "heat")
+
+country.official_time <- rbind(countries_df_2015, countries_df_2016, countries_df_2017)
+country.official_time <- country.official_time[order(-country.official_time$Total.Runners),]
+```
+
+### Taking the top four countries with highest number of participants. USA, Canada, UK and Mexico has the highest number of runners in all the three years.
+```{r, echo=FALSE, warning=FALSE, include=T}
+tr_country <- subset(country.official_time, country.official_time$Country %in% c('USA', 'CAN', 'GBR', 'MEX'))
+ggplot(tr_country, aes(x = year,y = avg.official.time, fill=year)) +
+        geom_bar(position="dodge",stat="identity") +
+        scale_fill_viridis(discrete = T, option = "E") +
+        ggtitle("Average official time of top 4 Countries with highest number of runners") +
+        facet_wrap(~Country) +
+        #theme_ipsum() +
+        theme(legend.position="none") +
+        xlab("Year")
+
+```
+
+As we can see from the plot, there is very slight increase in average official time for top four countries with highest number of runners over the three years.
+
+
+### Now lets look at the ANOVA test comparing official time for all the three years.
+Null hypothesis: There is no difference in means of the official time of runners for three years.
+
+```{r, echo=FALSE, include=T}
+set.seed(2402)
+sample_2017 <- bm_2017[sample(nrow(bm_2017),50),c('year', 'Official.Time.Min')]
+sample_2016 <- bm_2016[sample(nrow(bm_2016),50),c('year', 'Official.Time.Min')]
+sample_2015 <- bm_2015[sample(nrow(bm_2015),50),c('year', 'Official.Time.Min')]
+
+official_time_sample <- rbind(sample_2017, sample_2016, sample_2015)
+anoveRes_official_racing_time <- aov(Official.Time.Min ~ year, data=official_time_sample)
+summary_official_time1 <- unlist(summary(anoveRes_official_racing_time))
+tuckeyageaov <- TukeyHSD(anoveRes_official_racing_time)
+tuckeyageaov
+boxplot(Official.Time.Min ~ year, data = official_time_sample, xlab="Year", ylab="Official time in minutes", main="official time of runners over 3 years", col=c("#87ceeb", "#FFA500", "#ffc0cb"))
+```
+
+p value `r summary_official_time1["Pr(>F)1"]` is greater than 0.05. Also from tuckey's results, we can see the probability value is greater than 0.05 for all comparisons. So, we fail to reject the null hypothesis and we can conclude that the means of the official time is same for three years.
+
+
+### Now let's see whether there are any runners participated in all the three years.
+```{r, echo=FALSE}
+bm_2015$Age_compare_2015_2016 <- bm_2015$Age+1
+bm_2016$Age_compare_2015_2016 <- bm_2016$Age
+both <- merge(bm_2015, bm_2016, by=c("Name","Age_compare_2015_2016"))
+both$Age_compare_2016_2017 <- both$Age_compare_2015_2016+1
+bm_2017$Age_compare_2016_2017 <- bm_2017$Age
+both1 <- merge(bm_2017, both, by=c("Name","Age_compare_2016_2017"))
+```
+There are total `r nrow(both)` runners participated in both 2015 and 2016 marathon and there are `r nrow(both1)` runners participated in all the three years.
+
+### Now let's check whether the performance of the runners participated in all the three years is better than the first time runners by comparing the average official time in the year 2017.
+Null Hypothesis for z-Test: No difference in average official times of first time and third time runners.
+
+Alternate Hypothesis: Average official time of first time runners is greater than Average Official time of runners participated in all the three years.
+alpha:0.05
+```{r, echo=FALSE}
+rem_runners.2017 <- bm_2017[!bm_2017$Bib %in% both1$Bib,]
+ztest95 = z.test(x=rem_runners.2017$Official.Time.Min,alternative = "greater" ,mu=mean(both1$Official.Time.Min), sigma.x = sd(both1$Official.Time.Min))
+ztest95
+```
+Since the p-value less than alpha 0.05, we reject the null hypothesis.That means the average official time of third time runners is lesser than first time runners. we can conclude that third time runners performance is better than the first time runners.
+
+## Analysis of Nationality/Continent
+
+###Smart Questions
+I foucs on explore whether nationality affect marathon time, and specific questions include:
+
+(1)Is marathon time same in different nationality/continents? If not, how is the difference?
+
+(2)Among 'fast runners' groups (top 1/4), is marathon time still the same/different? How does the difference look?
+
+(3)Would nationality/continent be independent with finish time?
+```{r,echo=FALSE,include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+head(bm_2017)
+str(bm_2017)
+library(lubridate)
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time)
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60
+```
+
+###Expextation and Data Exploratory
+Before data exploratory we expect African group would be the fast and avearge finish time could be different. As for nationality/continent factor, we expect it not to be independent.
+
+First we will a look at distribution of finish time among different countries
+
+From finish time-nationaliy plot we can see, finish time is different among different country groups. But since there are more than 90 countries included, it is hard to read and get further exploration. So we decided to group countries by continents. Since American runners are most, we list USA as an individual part in Continent.
+
+We download library countrycode, which helps us convert country code to continents. After checking, we found some country codes are not included in library countrycode, so we reviewed remained country codes and fixed. Now we got a new column called Continent. Six continents in total include Asia, Americas, Europe, USA, Africa and Oceania.
+```{r,include=FALSE,echo=FALSE}
+#install countrycode package to convert country code to continent
+library(dplyr)
+library(countrycode)
+library(ggplot2)
+library(maps)
+library(rworldmap)
+library(sp)
+#library(plotly)
+```
+```{r,echo=FALSE,warning=FALSE, include=TRUE}
+bm_2017$Country<-factor(bm_2017$Country,order=T)
+ggplot(data=bm_2017)+
+  geom_point(mapping=aes(x=Country, y=Official.Time.Min, color=Age))+
+  ggtitle("Scatter plot of finish time & country by age")
+#there are 91 countries in total, and I group them by continent, but take USA as an independent one`
+bm_2017$Country1<-as.vector(bm_2017$Country)
+bm_2017$Continent<-'USA'
+bm_2017$Continent[bm_2017$Country!='USA'] <- countrycode(sourcevar = bm_2017[, "Country1"],origin = "iso3c",destination = "continent")
+#some country codes in could not be indentified by countrycode package, so we convert the NA to continent
+bm_2017_ContinentNA<-subset(bm_2017,is.na(bm_2017$Continent))
+bm_2017$Continent[bm_2017$Country=='JPN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='BRA']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='GBR']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='COL']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HKG']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='CHN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='IRL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='SWE']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='GER']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='CAY']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='CAN']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='GRE']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='TWN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='MEX']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='ESP']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='DEN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='LUX']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='BEL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='FRA']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='KOR']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='ITA']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='POL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='ARG']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='AUS']<-'Oceania'
+bm_2017$Continent[bm_2017$Country=='CHI']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='LTU']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='COL']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='FIN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='PER']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HON']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='CZE']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='THA']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='SUI']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='PHI']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='NED']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='ECU']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='SVK']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='RSA']<-'Africa'
+bm_2017$Continent[bm_2017$Country=='GUA']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HUN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='RUS']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='KEN']<-'Africa'
+bm_2017$Continent[bm_2017$Country=='ETH']<-'Africa'
+#to check whether we can convert all contries into continent
+bm_2017_ContinentNA2<-subset(bm_2017,is.na(bm_2017$Continent))
+ggplot(data=bm_2017)+
+  geom_point(mapping=aes(x=Continent, y=Official.Time.Min, color=Age))+
+  ggtitle("Scatter plot of finish time & continent by age")
+#Then we got another ggplot
+```
+
+By continent, 20945 runners are from the U.S.,2944 are from Americas, 1614 runners are from Europe, 681 are from Asia, 194 are from Oceania, and 32 are from Africa.
+
+Then we explore on Finish Time-Continent plot. Boxplot shows average finish time in Africa group is much lower than others. Besides Africa group, other groups all have outlier. We expect Africa group's average time is lower and is differnt from others, then we do anova test to test whether out expectation is correct.
+
+Before Anova test, first we explore whether each group is normal distibution.Besides Africa, other groups are all normal distribution. But because Africa group does not bias too much, we can continue Anova.
+```{r,echo=FALSE, include=TRUE}
+#Then, we explore deeper into individual groups
+#First, we see the offical finishing time distribution in each group
+hist(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min, main= 'Offical finished time distribution in African group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min, main= 'Offical finished time distribution in American group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min, main= 'Offical finished time distribution in European group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min, main= 'Offical finished time distribution in Oceania group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min, main= 'Offical finished time distribution in USA group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min, main= 'Offical finished time distribution in Asian group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min)
+#from the histogram and QQ plot we can see, African group is not in normal distribution. Other groups are of normal distribution, but outliers exist
+```
+
+```{r,echo=FALSE, include=TRUE}
+boxplot(bm_2017$Official.Time.Min ~ Continent, data=bm_2017,col='yellow',main='boxplot of finishing time(all participants)')
+#From the plot we can see on average, African runners use least time to finish. Besides African group, there are many outliers in other groups. To explore whether other groups have same finishing mean value, we continue with anova test
+```
+
+Anova test shows p value is very low, so we reject the null hypothesis that mean of official finished time are same, to find which groups are different, we go into hoc test.
+
+Under 95% confidence level, we fail to reject the null hypothesis that two gouups of runners -- who are from Oceania and Americas, Oceania and Europe have the same finshing time. And we reject the null hypothesis that other group's finishing time are different. Therefore, runners from Oceania & American and Oceania & Europe have same finish time, but other continents group are different.
+```{r,include=FALSE,echo=FALSE}
+summary(bm_2017)
+#from the reult we can see, 20945 runners are from the U.S.,2944 from Americas, 1614 runners are from Europe, 681 are from Asia,194 are from Oceania, and 32 are from Africa
+#convert continent into factor
+aov1<-aov(Official.Time.Min~Continent,data=bm_2017)
+summary(aov1)
+#p value is very low, so we reject the null hypothesis that mean of official finished time are same, to find which groups are different, we go into hoc test`
+tukeyaov1<-TukeyHSD(aov1)
+tukeyaov1
+#under 95% confidence level, we fail to reject the null hypothesis that two gouups of runners -- who are from Oceania and Americas, Oceania and Europe have the same finshing time. And we reject the null hypothesis that other group's finishing time are different.
+```
+
+Then we remove outlier to see any changes.
+```{r,echo=FALSE,include=FALSE}
+outlierKD <- function(dt, var) {
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     response <- "y"
+     if(response == "y" | response == "yes"){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+```
+
+We remove individuals who finish Marothon extremely slow.
+```{r,include=FALSE,echo=FALSE}
+outlierKD(bm_2017, Official.Time.Min)
+summary(bm_2017)
+#we remove the outliers with extremly large value of offical time
+```
+After removing outlier, we test normal distribution and do anova test again.
+
+The result shows after removing outlier p value is still extremely low, so we reject null hypothesis that finish time are same. Hoc test shows the same results as before that besides Oceania & American and Oceania & Europe, other groups are different in finish time.
+```{r,echo=FALSE, include=TRUE}
+outlierKD(bm_2017, Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min, main= 'Offical finished time distribution in African group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Africa')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min, main= 'Offical finished time distribution in American group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Americas')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min, main= 'Offical finished time distribution in European group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Europe')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min, main= 'Offical finished time distribution in Oceania group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Oceania')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min, main= 'Offical finished time distribution in USA group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='USA')$Official.Time.Min)
+hist(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min, main= 'Offical finished time distribution in Asian group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min)
+qqline(subset(bm_2017,bm_2017$Continent=='Asia')$Official.Time.Min)
+#After removing outlier, we could see besides African group, other groups are all obey the normal distribution
+```
+```{r,echo=FALSE}
+outlierKD(bm_2017, Official.Time.Min)
+boxplot(bm_2017$Official.Time.Min ~ Continent, data=bm_2017,col='yellow')
+#From the plot we can see on average, African is still the group with least time to finish. To explore whether other groups have same finishing mean value, we continue with anova test
+# Set random seed
+set.seed(123)
+# After removing outlier, we get 50 samples from each dataframe
+sample_Asia <- subset(bm_2017,bm_2017$Continent=='Asia')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Asia')),50), ]
+sample_Europe <- subset(bm_2017,bm_2017$Continent=='Europe')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Europe')),50), ]
+sample_America <- subset(bm_2017,bm_2017$Continent=='Europe')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Europe')),50), ]
+sample_USA <- subset(bm_2017,bm_2017$Continent=='USA')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='USA')),50), ]
+sample_Oceania <- subset(bm_2017,bm_2017$Continent=='Oceania')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Oceania')),50), ]
+#Since America sample is small(<50),we do not randomly pick African runners
+sample_Africa<-subset(bm_2017,bm_2017$Continent=='Africa')
+#bind them back together to one dataframe
+samples <- rbind(sample_Asia,sample_Europe,sample_America,sample_USA,sample_Oceania,sample_Africa)
+```
+```{r,echo=FALSE,include=FALSE}
+aov2<-aov(Official.Time.Min~Continent,data=samples)
+summary(aov2)
+#After removing the outlier, and pick random runners, we got p value extremely low, so we reject the null hypothesis that mean of official finished time are same, to find which groups are different, we go into hoc test`
+tukeyaov2<-TukeyHSD(aov2)
+tukeyaov2
+#After removing outliers, under 95% confidence level, we  reject the null hypothesis that four gouups of runners -- who are from Asia and Africa, Europe and Africa, USA and Africa have the same finshing time. And we fail to reject the null hypothesis that other group's finishing time are different.
+```
+
+Next we explore whether resluts are same in those fast runners. We subset and pick runners with shorest 1/4 finish time. The runners who finished race less that 207 mintutes is at top1/4.
+
+Boxplot shows African runners still run faster than other five groups.
+```{r,include=FALSE,echo=FALSE}
+#now we define the top1/4 as the fast runnners, and we will explore whether there is difference between different continents in fast groups
+#The runners who finished race less that 207 mintutes is at top1/4
+top25<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.25)
+top25
+fast_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.25))
+head(fast_bm_2017)
+summary(fast_bm_2017)
+```
+
+
+We do normal distritution test as before. Now all groups obey normal distribution. Anova test shows we reject null hypothesis that all groups have same means. Hoc test shows African has different finish time compared with any other group, and the remaning groups have the same finish time
+```{r,echo=FALSE, include=TRUE}
+#first we do normal test for different continent groups as before
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='Africa')$Official.Time.Min, main= 'Offical finished time distribution in African group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='Africa')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='Africa')$Official.Time.Min)
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='Americas')$Official.Time.Min, main= 'Offical finished time distribution in American group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='Americas')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='Americas')$Official.Time.Min)
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='Europe')$Official.Time.Min, main= 'Offical finished time distribution in European group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='Europe')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='Europe')$Official.Time.Min)
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='Oceania')$Official.Time.Min, main= 'Offical finished time distribution in Oceania group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='Oceania')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='Oceania')$Official.Time.Min)
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='USA')$Official.Time.Min, main= 'Offical finished time distribution in USA group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='USA')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='USA')$Official.Time.Min)
+hist(subset(fast_bm_2017,fast_bm_2017$Continent=='Asia')$Official.Time.Min, main= 'Offical finished time distribution in Asian group', xlab='Finished time', ylab='Frequency',col='blue')
+qqnorm(subset(fast_bm_2017,fast_bm_2017$Continent=='Asia')$Official.Time.Min)
+qqline(subset(fast_bm_2017,fast_bm_2017$Continent=='Asia')$Official.Time.Min)
+#in fast group, each group is more likely to be normal distribution compared to previous group with whole runners
+```
+```{r,echo=FALSE, include=TRUE}
+boxplot(fast_bm_2017$Official.Time.Min ~ Continent, data=fast_bm_2017,col='green',main='boxplot of finishing time(quantile 25%)')
+#From the plot we can see on average, African is still the group with least time to finish. To explore whether other groups have same finishing mean value, we continue with anova test
+```
+```{r,echo=FALSE,include=FALSE}
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='Africa')$Official.Time.Min)
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='Oceania')$Official.Time.Min)
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='USA')$Official.Time.Min)
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='Asia')$Official.Time.Min)
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='Europe')$Official.Time.Min)
+mean(subset(fast_bm_2017,fast_bm_2017$Continent=='America')$Official.Time.Min)
+#and we check the mean of each group
+```
+```{r,include=FALSE,echo=FALSE}
+aov3<-aov(Official.Time.Min~Continent,data=fast_bm_2017)
+summary(aov3)
+#P value is small so we reject the hypothesis that all groups has same mean value
+#To find which groups are different, we go into hoc test
+tukeyaov3<-TukeyHSD(aov3)
+tukeyaov3
+#if p value are large, we fail to reject the null hypothesis thta official time is same bewteen two groups. Therefore, African has different official time compared with any other group, and the remaning groups have the same official time
+```
+
+Last but not least, we explore whether continent and finish time are independent in fast group. We did Chi-Test, and result show p value is small, so we reject the null hypothesis that two are independent. Therefore, continent has effect on Finish time.
+```{r,include=FALSE, include=TRUE}
+conttable<-table(fast_bm_2017$Continent,fast_bm_2017$Official.Time.Min)
+chitest<-chisq.test(conttable,simulate.p.value = TRUE)
+chitest
+```
+
+## Analysis of Home State
+
+```{r}
+
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+loadPkg('lubridate') # used from time conversions
+library(lubridate)
+loadPkg('dplyr') # varios data transfers
+library(dplyr)
+loadPkg('ggplot2') # plotting and mapping
+library(ggplot2)
+loadPkg('usmap') # making chloropleths
+library(usmap)
+```
+
+
+### SMART Questions
+
+I decided to focus how much of an impact the state you live in affects the average marathon time.  Several specific questions are involved with that broader question:
+
+How do runners from Massaschusets, the home state of the marathon, compare to the rest of the runners?  
+
+Are the top three states' average finishing times similar?
+
+Are there states that are particularly faster or slower than others?
+
+Are there any trends across different regions?  
+
+We'll explore elements of all of these questions in the data analysis below.
+
+### Data Ingest and Cleaning
+
+First, lets read in the data for 2017.  I'm using the standard R 'read.csv' rather than the readr 'read_csv' since that package defaults all time  to a specific time of day.
+```{r, echo=FALSE, include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+str(bm_2017)
+```
+
+We have a dataframe with `r format(nrow(bm_2017), big.mark=",")` total entries and 25 fields.  The data dictionary for all of these fields is included in the data summary and introduction.
+
+Lets make a few changes to the "Official.Time" field, which repersents the finishing time for each runner.  This will allow us to display the data as a new field in minutes called "Official.Time.Min".  We'll use the lubridate package to convert a charachter time in 'Hours:Minutes:Seconds' format to number of seconds, which we will divide by 60 to give us a total run time in minutes.  This will let us compare running times more easily.
+```{r}
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get actual minutes ran
+```
+
+
+### Basic Descriptive Statistics
+
+For this section of analysis, we'll first explore the data and see how consistent the average race times are across the states.  We'll also look at how many runners come from each state and ensure there are enough runners from each state to be significant.  Then, I'll look at the states with the three most runners, and run an ANOVA comparison on the means of their times.  To do this, I only need the fields 'Official.Time.Min' and 'State', so I'll subset down to save some memory since there are over 26,000 observations.  At first, I will include the 'Country' field so I can subset down to just the United States.
+
+```{r}
+times_states <- bm_2017[,c('State', 'Official.Time.Min', 'Country')]
+summary(times_states)
+```
+
+From running the summary function on our data, we learn some interesting information about where our runners come from.  Nearly 21,000 of our 26,000 runners come from the United States, with the second-best repersented country being Canada.  Additionally from looking at the states, Massachusets has over 4500 runners, more than double the next state.  There are also almost 4000 blank "states", which makes sense for runners from countries with administrative regions other than states.
+
+When we look at the descriptive statistics from the official running time in minutes, we see evidence of a definite right skew.  The median is `r round(median(times_states$Official.Time.Min), 2)`, but the mean is `r round (mean(times_states$Official.Time.Min), 2)`, suggesting a significant right tail. The standard deviation is `r round (sd(times_states$Official.Time.Min), 2)`.
+
+
+```{r}
+# I used the subset function to create a new dataframe with just the runners who live in USA.
+us <- subset(times_states, Country=='USA')
+# I also use the 'droplevels' function to remove factor levels that are no longer used.
+us$State <- droplevels(us)$State
+# Then, I can drop the country field since I no longer need it.
+us <- select(us, -Country)
+str(us)
+```
+
+Now lets examine just runners from the United States, the focus for this analysis.  Looks like we have `r format(nrow(us), big.mark=",")` runners from the United States.  Unsuprisingly, we are left with very similar summary statistics because US runners were such a large portion of the runners.  The median is `r round (median(us$Official.Time.Min), 2)`, but the mean is `r round (mean(us$Official.Time.Min), 2)`, again suggesting a significant right tail. The standard deviation is `r round (sd(us$Official.Time.Min), 2)`.
+
+We are left with 57 total states in the dataframe.  In addition to the 50 US states, there are also runners from:
+
+AA, AE, and AP:  These are overseas postal codes for Americans in Asia, Europe, and in the Pacific and are usually used by members of the US military.  
+
+DC: District of Columbia
+
+GU: Guam
+
+PR: Puerto Rico
+
+VI: US Virgin Islands
+
+
+## Initial Visualization and More Statistics
+
+Now lets look at some basic visualizations.  We'll want to first look at the total number of runners for each state, and the average race time for each state.  Since the I will be closely examining two variables (count of runner per state and average finishing time per state) across the same data, I will always use yellow/golds when color repersents counts of runners and blues when color repersents the average finishing times.  As these are the colors of the Boston Marathon, I thought them appropriate for the analysis.
+
+```{r, include=TRUE}
+state_counts <- aggregate(us$State, list(us$State), length)
+state_means <- aggregate(us$Official.Time.Min, list(us$State), mean)
+
+ggplot(data = state_counts, aes(x)) +
+  geom_histogram(col='yellow',
+                 fill='gold', binwidth = 300) +
+  labs(title='Count of Runners per State for 2017 Boston Marathon', x='Total Runners', y='States')
+
+ggplot(data = state_means, aes(x)) +
+  geom_histogram(col='dark blue',
+                 fill='blue', binwidth = 10) +
+  labs(title='Average Finish Time of Runners per State for 2017 Boston Marathon', x='Finishing Time (minutes)', y='States')
+
+
+
+```
+
+So we can see that most states have less than 500 participants, and only a few have more than 1000.  Most states seem to have an average race time between 220 and 240 minutes, with a few outliers.  But we don't know how many runners were in those states that are outliers.  It could be there were just a a couple of runners who ran very fast or slow.  We'll have to look at these possibilities later on in our analysis.
+
+Let's merge our Total Runners count and Average Time into one DF, and then merge this data into our 'US' dataframe with all of the observations.  This will make it much easier to plot different visualizations by allowing us to set threshold and only plot states where the count of numbers is above a certain threshold.
+```{r}
+states_df <- merge(state_counts, state_means, by='Group.1') # combine our two aggregated dataframes together
+names(states_df) <- c('State', 'Total_Runners', 'Average_Time') # rename the columns
+
+# combine the aggregated data to our original dataframe.  This gives us maximum flexibility.  Each observation
+# will have the state of the runner, his or her time, and then the metadata about their state (total runners and
+# mean time.)  I had previously kept these data separate, but it limited my flexibility in plotting the data.
+us_with_totals <- merge(us, states_df, by='State', all.x = T, all.y = F)
+names(us_with_totals) <- c('State', 'Official.Time.Min', 'Total_Runners_by_State', 'Average_Time_by_State')
+```
+
+We can now make a boxplot for all of the states that with more than a certain number runners in the 2017 race.  After trying several thresholds, I decided 60 runners was a good threshold for analysis.  It included most states but removed several states with a small number of runners and a significantly different average race time.
+
+I've also shaded the boxplots by the number of runners so that darker golds have more participants than boxblots with a lighter yellow.  MA definitely has the most particpants, and a much slower time.  Additonally, the IQR for some other states near MA like RI and NH are definitely slower than other states.  Also, runners from Colorado seem to be FAST, but it looks like there arent that many particpants.  
+```{r, include=T}
+
+us_with_totals_subset <- subset(us_with_totals, Total_Runners_by_State > 60)
+
+ggplot(data = us_with_totals_subset, aes(x = (State), y = Official.Time.Min)) +
+  geom_boxplot(aes(fill=Total_Runners_by_State),width = .9) +
+  ggtitle('Boxplot of Average Finishing Times by State, Colored by Total Runners') +
+  labs(x='State', y='Average Finishing Time (minutes)') +
+  scale_fill_continuous(name='Total Runners by State', low='light yellow', high='gold')
+```
+
+Now that we have this date prepared we can make a bar chart to better review the data.  We'll plot the height of each bar as a function of count, and color by the average time of the runner.  We'll also make two copies of this chart.  The first will be sorted by total number of runners per state, and the second by average completion time.  We'll also only plot states that had more than 60 runners to prevent one or two "fast" runners from a state being over-weighted.
+
+```{r, include=TRUE}
+
+us_with_totals_subset <- subset(us_with_totals, Total_Runners_by_State > 60)
+#us_with_totals_subset <- subset(us_with_totals_subset, State != 'MA')
+
+ggplot(data=us_with_totals_subset, aes(x=(reorder(State, -Total_Runners_by_State)),  fill=Average_Time_by_State)) +
+  geom_bar(stat = "count") +
+  ggtitle('Barchart of Total Runners by State, Colored by Average Finishing Time') +
+  labs(x='State', y='Count of Runners', subtitle='Sorted by total runners when more than 60 runners finished') +
+  scale_fill_continuous(name='Avg Finishing Time')
+
+ggplot(data=us_with_totals_subset, aes(x=(reorder(State, -Average_Time_by_State)),  fill=Average_Time_by_State)) +
+  geom_bar(stat = "count") +
+  ggtitle('Barchart of Total Runners by State, Colored by Average Finishing Time') +
+  labs(x='State', y='Count of Runners', subtitle='Sorted by average finishing time when more than 60 runners finished') +
+  scale_fill_continuous(name='Avg Finishing Time')
+
+```
+
+Now we are seeing some trends for different states.  Four of the slowest ten states (MA, RI, NH, ME) are from New England. It looks like runners from New England and MA specifically are much slower.  Also, CO  looks like they are pretty fast and its easy to see here that they had over 500 runners.  
+
+Before we go on to some statistical tests to see if we can prove that New England is slower, let's make a map to get some more info.
+
+## Mapping and Further Analysis
+
+Let's make a plot of average finishing time across all of the states.  Since a few finishing times in states with small numbers of runners can dramatically skew the average, lets keep only looking at states where there are more than 60 runners.  States with less than 60 runners will be greyed out.
+
+A plot with our other variable of interest, total number of runners by state, was not very interesting because MA has so many more runners than any state.  Even the #2 state, California, has so almost double the runners as the #3 state, New York.  Therefore, I kept plotting focused on the average finishing time and excluded the map with counts by total runners.
+
+I also diverged from my yellow/blue color scheme and chose to use the 'virdis' color pallete to better identify the contrasts between states.
+
+```{r, include=TRUE}
+
+loadPkg('usmap') # making chloropleths
+library(usmap)
+
+# get a dataframe with more than 60 runners
+us_with_totals_subset <- subset(us_with_totals, Total_Runners_by_State > 60)
+
+# the usmap package only works if there are two columns, the state ID and the variable to be plotted.
+map_count <- data.frame(us_with_totals_subset$State, us_with_totals_subset$Average_Time_by_State)
+names(map_count) <- c('state','total')
+# lets drop all the duplicates now since this dataframe had 20,000 observations
+map_count <- map_count[!duplicated(map_count),]
+# and lets drop all the states that arent in our 50 state map.
+map_count <- subset(map_count, !(state %in% c('AA', 'AE', 'AP', 'GU', 'PR', 'DC', 'VI')))
+
+plot_usmap(regions='states', data=map_count, values='total')   +
+  theme(legend.position = 'right')  +
+  ggtitle('Chlorpleth of of Average Finishing Time, 50 US States') +
+  labs(subtitle='States with less than 60 runners finishing are colored grey.') +
+  scale_fill_continuous(name='Avg Finishing Time (minutes)', limits=(c(220,270)),
+                        breaks = c(220, 235, 250, 265), type = "viridis")
+
+
+
+```
+
+Looks great! We can see that New England does look a little slower, so let's do another map one with just New England.
+
+
+```{r, include=TRUE}
+
+plot_usmap(regions='states', include = .new_england, data=map_count, values='total')   +
+  theme(legend.position = 'right') +
+  ggtitle('Chlorpleth of of Average Finishing Time, New England') +
+  labs(subtitle='States with less than 60 runners finishing are colored grey.') +
+  scale_fill_continuous(name='Avg Finishing Time (minutes)',limits=(c(220,270)),
+                        breaks = c(220, 235, 250, 265), type = "viridis")
+```
+
+```{r}
+new_england <- subset(us_with_totals, (State %in% c('ME', 'VT', 'NH', 'MA', 'RI', 'CT')))
+summary(new_england)
+mean(new_england$Official.Time.Min)
+
+not_new_england <- subset(us_with_totals, !(State %in% c('ME', 'VT', 'NH', 'MA', 'RI', 'CT')))
+summary(not_new_england)
+mean(not_new_england$Official.Time.Min)
+
+```
+
+For states in New England, we definitely see slower times.  In fact, the mean finishing time for New Englanders is `r mean(new_england$Official.Time.Min)` minutes compared to a finishing time of `r mean(new_england$Official.Time.Min)` minutes for Non-New Englanders.
+
+### Statistical Analysis
+
+So the top states are MA, CA, and NY.  Let's first focus on these three states and see if the average finishing times are different for the top three states.  Lets start by making a boxplot for each of these three states.
+
+```{r, include=TRUE}
+runners_top3_states <- subset(us_with_totals, State %in% c('MA', 'CA', 'NY'))
+runners_top3_states$State <- droplevels(runners_top3_states$State)
+
+runners_ma <- subset(runners_top3_states, State=='MA')
+runners_ca <- subset(runners_top3_states, State=='CA')
+runners_ny <- subset(runners_top3_states, State=='NY')
+
+ggplot(data = runners_top3_states, aes(x = State, y = Official.Time.Min)) +
+  geom_boxplot(aes(fill=Total_Runners_by_State),width = 0.9) +
+  ggtitle('Boxplot of Average Finishing Times for Top Three States, Colored by Total Runners') +
+  labs(x='State', y='Average Finishing Time (minutes)') +
+  scale_fill_continuous(name='Total Runners by State', low='light yellow', high='gold')
+
+
+ggplot(data = runners_top3_states, aes(x=Official.Time.Min, fill = State)) +
+  geom_histogram(data=subset(runners_top3_states, State=='MA'), alpha=.2, bins=30) +
+  geom_histogram(data=subset(runners_top3_states, State=='CA'), alpha=.4, bins=30) +
+  geom_histogram(data=subset(runners_top3_states, State=='NY'), alpha=.2, bins=30) +
+  scale_fill_brewer(name = 'Top 3 States', palette="Set2") +
+  ggtitle('Histogram of Average Finishing Times for Top Three States') +
+  labs(x='Average Finishing Time (minutes)', y='Count')
+
+
+```
+
+The boxplot really shows that MA runners are slower than those from CA and NY.  The histogram for MA is also much less skewed to the right than CA or NY.  This suggests there's something different about runners from MA, aside from there being so many more runners from MA.
+
+#### Testing for Normality
+We can create QQ plots for all three of these datasets to see if they are normal.  After reviewing all three, the MA dataset is the most normal of the three, with CA and NY having significant right-skews.  It makes sense to sample all three of these datasets for our ANOVA testing.  Let's sample 50 observations and bind them together to a new dataframe.
+```{r, include=T, fig.height=4, fig.width=6}
+qqnorm(runners_ma$Official.Time.Min, main='QQ Plot for MA Runners')
+qqline(runners_ma$Official.Time.Min)
+
+qqnorm(runners_ca$Official.Time.Min, main='QQ Plot for CA Runners')
+qqline(runners_ca$Official.Time.Min)
+
+qqnorm(runners_ny$Official.Time.Min, main='QQ Plot for NY Runners')
+qqline(runners_ny$Official.Time.Min)
+```
+
+```{r}
+# Set random seed
+set.seed(12345)
+
+# get 50 samples from each dataframe
+sample_ca <- runners_ca[ sample(nrow(runners_ca),50), ]
+sample_ny <- runners_ny[ sample(nrow(runners_ny),50), ]
+sample_ma <- runners_ma[ sample(nrow(runners_ca),50), ]
+
+#bind them back together to one dataframe
+samples <- rbind(sample_ca, sample_ny, sample_ma)
+```
+
+#### ANOVA Test
+Now lets look at the ANOVA test comparing these three means of the top three states.  The null hypothesis here will be there is no difference in means between the three states.  The alternative hypothesis is that there is a difference.  If the p-value is significantly small (below .05 for a 95% confidence level), we will reject the null hypothesis and conclude there is a difference between at least some of the means.
+```{r}
+anovaRes = aov(Official.Time.Min ~ State, data=samples)
+anovaRes
+summary(anovaRes)
+anovaRes
+
+```
+
+After completing the test, we find that there is an incredibly small p-value of `r summary(anovaRes)[[1]][["Pr(>F)"]][1]`, suggesting we reject the null hypothesis that there is no difference between the means. There is something different about these means.  Lets take a look at Tukey's multiple comparison of means.
+
+```{r, include=TRUE}
+tukeySmokeAoV <- TukeyHSD(anovaRes)
+tukeySmokeAoV
+```
+
+When we look at NY to CA, Tukey's family-wise comparison shows an incredibly high adjusted p-value. Let's explore that more.
+
+#### Two-Sample T-Test
+
+Let's conduct a two-sample T-test comparing these two similar means for CA and NY.  The null hypothesis for this test will be that CA and NY have the same mean finishing time.  The alternative hypothesis is that NY and CA have different average finishing times.
+
+```{r}
+ttest = t.test(((subset(samples, State =='NY'))$Official.Time.Min), (subset(samples, State =='CA'))$Official.Time.Min)
+ttest
+```
+
+The result of the T-Test is `r round(ttest$p.value,5)`, a very high p-value.  Thus, we fail to reject the null which stated there was no difference in the means between CA and NY.
+
+### Analysis of average finishing times across the US without New England
+
+If we filter out states in New England, how different are the average finishing times for the rest of the country?  To answer this question, we have to first do some data cleaning.  We can limit our analysis to the 35 non-New Englanf states that had more than 60 runners.  Then, we'll take 50 random samples from each one of those states, and finally conduct an ANOVA analysis on that sample data grouped by states.  The null hypothesis is that there is no difference amongst means from non-New England states with at least 60 runners.  The alternative is that there is a difference.
+
+
+```{r}
+set.seed(12345)
+
+not_new_england_subset <- subset(not_new_england, Total_Runners_by_State > 60)
+not_ne <- not_new_england_subset %>% group_by(State) %>% sample_n(50)
+
+anovaRes = aov(Official.Time.Min ~ State, data=not_ne)
+anovaRes
+summary(anovaRes)
+```
+
+After running the analysis, we get a high p-vale of `r round(summary(anovaRes)[[1]][["Pr(>F)"]][1],5)`, meaning we fail to reject the null hypothesis.  It looks like there is a high level of consistency for the average run time across the US outside of New England.  When I ran this analysis before on states with fewer total runners at the race, my answers were far more variable.  This is further evidence that we need to make sure we filter out states with only a handful of runners as a few fast or slow finishing times can affect the entire state's average.
+
+### Analysis of the rest of the US vs. New England
+
+The final piece of analysis we'll do is a two-sample T-test between New England states and non-New England states to compare average finishing times.  The null hypothesis is that there is no difference in mean finishing times for states in New England compared to the rest of the US, while the alternative hypothesis is there will be a difference.  Based on our previous analysis, we expect there to be a difference, but we should run the test to be sure.
+
+```{r}
+set.seed(12345)
+
+not_new_england_subset <- subset(not_new_england, Total_Runners_by_State > 60)
+not_ne <- not_new_england_subset %>% group_by(State) %>% sample_n(50)
+not_ne$region <- 'Not_New_England'
+
+new_england_subset <- subset(new_england, Total_Runners_by_State > 60)
+ne <- new_england_subset %>% group_by(State) %>% sample_n(50)
+ne$region <- 'New_England'
+
+ttest = t.test(ne$Official.Time.Min, not_ne$Official.Time.Min)
+ttest
+ttest$p.value
+```
+The test returns a very low p-value of `r ttest$p.value`, telling us we should reject the null hypothesis.  Average race times from New England are different from averages around the rest of the country.

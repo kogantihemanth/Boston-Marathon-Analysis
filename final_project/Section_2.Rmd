@@ -1,0 +1,828 @@
+---
+title: "Final, Section II"
+author: <span style="color:green">Team Why Axis?</span>
+date: <span style="color:green">10/9/2019</span>
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+#knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+loadPkg('lubridate') # used from time conversions
+library(lubridate)
+loadPkg('dplyr') # varios data transfers
+library(dplyr)
+loadPkg('ggplot2') # plotting and mapping
+library(ggplot2)
+loadPkg("modelr") # building linear models
+library(modelr)
+loadPkg("faraway") # for calculating VIF
+library(faraway)
+loadPkg('class')#for knn
+library(class)
+loadPkg('gmodels')#for cross table
+library(gmodels)
+loadPkg('glmnet')       # for Lasso and Ridge
+library(glmnet)
+loadPkg('ggcorrplot')   # for Correlation plot
+library(ggcorrplot)
+loadPkg('caret')        # used for creating different models
+library(caret)
+loadPkg('randomForest') # for random forest model
+library(randomForest)
+loadPkg('gbm')          # for Gradient Boosting model
+library(gbm)
+loadPkg('xgboost')      # for Extreme Gradient Boosting model
+library(xgboost)
+loadPkg('rpart')        # for decision Tree model
+library(rpart)
+loadPkg('relaimpo')     # for finding relative importance of features wrt R^2
+library(relaimpo)
+loadPkg("pls")
+library(pls)
+```
+
+# <span style="color:navy"> Bib Clustering Analysis </span>
+
+## Background
+
+Bib numbers are unique numbers used to identify each runner before, during, and after the race.  During the race, the bib number is actually worn by the runner as a unique identifier.  In some races like the Boston Marathon, bib numbers are given out in batches and used to organize the waves in which runners start a race.  To make the start of a 26,000 person race more organized, the Boston Marathon in 2017 broke the runners into four, color-coded groups.  To determine what group (or wave) a runner would be in, the marathon organizers used previously sumbitted qualifying times, as detailed below. (http://registration.baa.org/2017/cf/Public/iframe_EntryLists.cfm)
+
+Red bibs (numbers 101 to 7,700) are assigned to Wave 1 (starting at 10:00 a.m.). White bibs (numbers 8,000 to 15,600) are assigned to Wave 2 (starting at 10:25 a.m.). Blue bibs (numbers 16,000 to 23,600) are assigned to Wave 3 (starting at 10:50 a.m.) Yellow bibs (numbers 24,000 to 32,500) are assigned to Wave 4 (starting at 11:15 a.m.). The break between Wave 1 and Wave 2 is a 3:10:43 marathon qualifying time. The break between Wave 2 and Wave 3 is a 3:29:27 marathon qualifying time. The break between Wave 3 and Wave 4 is a 3:57:18 marathon qualifying time.
+
+The question at hand is can we develop an unsupervised clustering model that accurately identifies these groupings without using the information from the above paragraph?  An additional question is can we confirm that the fourth group also includes runners who did not have to qualify for the marathon but instead or running for a charity group.
+
+```{r, echo=FALSE, include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+str(bm_2017)
+```
+
+
+```{r}
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get 
+str(bm_2017)
+```
+
+## Data Cleaning and Exploration
+
+We first need to convert the bib number from a factor to an int.  We have to convert the factor to a charachter first though, because directly converting a factor to an int returns the underlying factor level, not the integer a factor may repersent.  
+
+Next, we can plot the finishing time against bib number and start to see several trends.  First, finishing times slowly yet steadily increase, supporting the theory that faster finishers get lower bib numbers.  Second, there are about four observable clusters, which match the waves organized by the Boston Marathon at the start.  Finally, the last group has much more variance within it, and far slower average finishing times.  These are likely the bib numbers of charity runners and other runners who did not need to qualify for the race.
+
+```{r, include=T, include=TRUE, message=FALSE}
+# To convert the bib number to anint, you have to first conver it to a charachter.
+# If you convert directly to numeric, you get the underlying facotr level, which is wrong.
+bm_2017$Bib_int <- as.numeric(as.character(bm_2017$Bib))
+bm_2017 <- na.omit(bm_2017)
+ggplot(bm_2017, aes(x=Bib_int, y=Official.Time.Min)) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Scatterplot of Bib Numbers vs. Finishing Time") 
+```
+
+This plot is rather dense, so lets use a density scatterplot to better see the distribution of the data.
+
+```{r, include=TRUE}
+# Bin size control + color palette
+ggplot(bm_2017, aes(x=bm_2017$Bib_int, y=bm_2017$Official.Time.Min)) +
+  geom_bin2d(bins = 150) +
+  scale_fill_continuous(type = "viridis") + theme_bw() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Density Scatteplot of Bib Numbers vs. Finishing Time") 
+```
+
+From the histogram below, we can see that there are some gaps from "unused" bib numbers or runners that did not finish the race.  The gap of unused bin numbers correlates to the breaks in the different wave groups, which has the added advantage of sharpening the edges of our clusters and hopefully making it easier for our model to successfully identify the correct groupings.
+
+```{r, include=T}
+ggplot(data = bm_2017, aes(Bib_int)) +
+  geom_histogram(col='blue',
+                 fill='lightblue', binwidth = 1000) +
+  labs(title='Histogram of Bib Numbers Finishing Race', x='Bib Number', y='Total Runners')
+
+```
+
+Now lets label the data with the right group names so we can compare our model's output.
+
+Red bibs (numbers 101 to 7,700) are assigned to Wave 1 (starting at 10:00 a.m.). White bibs (numbers 8,000 to 15,600) are assigned to Wave 2 (starting at 10:25 a.m.). Blue bibs (numbers 16,000 to 23,600) are assigned to Wave 3 (starting at 10:50 a.m.) Yellow bibs (numbers 24,000 to 32,500) are assigned to Wave 4 (starting at 11:15 a.m.). The break between Wave 1 and Wave 2 is a 3:10:43 marathon qualifying time. The break between Wave 2 and Wave 3 is a 3:29:27 marathon qualifying time. The break between Wave 3 and Wave 4 is a 3:57:18 marathon qualifying time.
+```{r}
+bm_2017 <- bm_2017 %>%
+    mutate(wave = case_when(Bib_int >= 1 & Bib_int <= 7700 ~ 1, # counting the "elites" in Wave 1
+                             Bib_int >= 8000 & Bib_int <= 15600 ~ 2,
+                             Bib_int >= 16000 & Bib_int <= 23600 ~ 3,
+                             Bib_int >= 24000 & Bib_int <= 32500 ~ 4))
+# covert the wave number into a factor
+bm_2017$wave <- as.factor(bm_2017$wave)
+
+# set color and numbers as lists for plotting specific colors to match wave numbers
+color.names <- c("red", "snow3", "blue", "yellow")
+wave.nums <- c(1,2,3,4)
+```
+
+```{r, include=TRUE}
+ggplot(bm_2017, aes(x=Bib_int, y=Official.Time.Min, col=wave)) + 
+  geom_point() +
+  scale_colour_manual(values=setNames(color.names, wave.nums)) +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Scatterplot of Bib Numbers vs. Finishing Time Colored by Wave") +
+  labs(color = "Wave Number")
+```
+
+
+## K-Means Clustering
+
+We can try K-means clustering to see if the algorithm can successfully identify the known clusters.  Since there are four known clusters, we will provide '4' as a parameter for the K-means algorithm.  Additionally, since K-means starts with a random division of elements, we will set the random seed at one and run K-means 20 times, keeping the most accurate model.
+
+```{r, include=TRUE}
+#k means, k=3
+#set.seed(1)
+bibs = as.data.frame(bm_2017$Bib_int)
+colnames(bibs) <- c('bib_int')
+bibs$time <- bm_2017$Official.Time.Min
+bibs <- na.omit(bibs)
+clusters <- kmeans(bibs, 4, nstart=20)
+
+# add the assigned clusters as a new column
+bibs$cluster_numb <- as.factor(clusters$cluster)
+
+# add the assigned aves as a new column
+bibs$wave_numb <- bm_2017$wave
+
+
+ggplot(bibs, aes(x=bib_int, y=time, col=cluster_numb)) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("K-Means Clustering with K=4, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+```
+
+As you can see in the above graph, K-means successfully identifes all four clusters and their break points perfectly.  This model works well here in part because of the breaks between the four clusters.
+
+## Hierarchical Clustering
+Because of the memory usage required to process hierarchical clustering with over 26,000 observations, this processing has been moved to a separate rmd.
+
+## Conclusions
+
+From our analysis so far, the K-means clustering appears to be the best model for this problemset.  Because it is a top down approach that fits the data into the number of clusters provided as an input to the model, it does an effective job of successfully finding the break points for this data.  On the other hand, the hierarchical approach is less effective at identifying these break points because each successive level of hierarchical clustering is looking for the next nearest node, rather than taking the entire data into account.
+
+
+# <span style="color:navy"> Rank, Gender and Age Analysis </span>
+```{r}
+#commented out previously organized variables
+#bm_2017<-read.csv('marathon_results_2017.csv')
+#bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+#bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get
+#bm_2017$Bib_int <- as.numeric(as.character(bm_2017$Bib))
+#bm_2017 <- na.omit(bm_2017)
+bm_2017$M.F <- as.factor(bm_2017$M.F)
+```
+
+```{r Ranks at each interval (in 4 quarters) predicting overall rank}
+#creating intervals of time
+#bm_2017 <- na.omit(bm_2017)
+bm_2017$X10K <- as.character(bm_2017$X10K)
+bm_2017$X10K.Min <- period_to_seconds(hms(bm_2017$X10K))/60
+bm_2017$X20K <- as.character(bm_2017$X20K)
+bm_2017$X20K.Min <- period_to_seconds(hms(bm_2017$X20K))/60
+bm_2017$X30K <- as.character(bm_2017$X30K)
+bm_2017$X30K.Min <- period_to_seconds(hms(bm_2017$X30K))/60
+bm_2017$X40K <- as.character(bm_2017$X40K)
+bm_2017$X40K.Min <- period_to_seconds(hms(bm_2017$X40K))/60 #Did not end up using this one
+
+bm_2017$X0.10K.Min <- bm_2017$X10K.Min #time between 0-10K
+bm_2017$X10.20K.Min <- bm_2017$X20K.Min-bm_2017$X10K.Min #time between 10-20K
+bm_2017$X20.30K.Min <- bm_2017$X30K.Min-bm_2017$X20K.Min #time between 20-30K
+bm_2017$X30.42K.Min <- bm_2017$Official.Time.Min-bm_2017$X30K.Min #time between 30-42.195K (end)
+
+bm_2017$X0.10K.Rank <- rank(bm_2017$X0.10K.Min) #rank during first quarter 0-10K
+bm_2017$X10.20K.Rank <- rank(bm_2017$X10.20K.Min) #rank during second quarter 10-20K
+bm_2017$X20.30K.Rank <- rank(bm_2017$X20.30K.Min) #rank during third quarter 20-30K
+bm_2017$X30.42K.Rank <- rank(bm_2017$X30.42K.Min) #rank during last quarter 30-42.195K
+```
+
+## Linear Regression
+### Fourth Quarter Performance
+
+Because we know from our previous analysis that the forth quarter rank contributes the most to the final rank most, we modeled how people's previous performance, represented by their bib-number (***mention something about clustering analysis before), their age and their gender affects their fourth quarter rank.
+```{r, include=TRUE}
+FourthQModel <- lm(X30.42K.Rank ~ Bib_int+M.F+Age, data=bm_2017) #Bib_int was created from "Bib_clustering"
+summary(FourthQModel)
+vif(FourthQModel)
+```
+
+In a model predicting the fourth quarter rank by bib number, gender, and age, slope/intercept value is 1.66e+03 and is significant (p<.001). All predictors, bib number, gender, and age significatly predicts total users (p<0.001).
+One unit increase in bib number positively impacts (+0.557) fourth quarter rank (p<0.001), meaning increased bib number (slower past performance) is likely to predict higher fourth quarter rank (slower fourth quarter performance). Being male (vs. female) positively impacts (+1420) fourth quarter rank (p<0.001). One unit increase in age positively impacts (+45.6) fourth quarter rank (p<0.001), meaning older people will likely have higher fourth quarter rank (slower fourth quarter performance).
+R2 (adjusted) is .434, which means that 43.4% of variability in fourth quarter rank is explained by bib number, gender, and age. The VIFs are 1.17-1.30, representing low multicollinearity.
+
+
+### Overall Performance
+We also looked to see if rank in each quarter of the race, age, and gender, to see their effect on final official time and the effect on overall rank.
+```{r, include=TRUE}
+#fitdata<-bm_2017[c('Official.Time.Min','Age','X30.42K.Rank','M.F','X0.10K.Rank','X10.20K.Rank','X20.30K.Rank','Overall')]
+model.final <- lm(Official.Time.Min ~ X0.10K.Rank+X10.20K.Rank+X20.30K.Rank+X30.42K.Rank+M.F+Age, data=bm_2017)
+summary(model.final)
+vif(model.final)
+```
+```{r, include=TRUE}
+model.overall <- lm(Overall ~ X0.10K.Rank+X10.20K.Rank+X20.30K.Rank+X30.42K.Rank+M.F+Age, data=bm_2017)
+summary(model.overall)
+vif(model.overall)
+```
+
+Ranks in each quarter of the race, gender, and age all have significant effect on offcial finishing time. However, VIFs of rank in 0-10k, 10-20k, and 20-30k show that the independent variables are highly correlated. Considering our previous analysis that the forth quarter performance contributes the most to the final rank, we rebuilt new model after droping first three quarters' rank.
+
+```{r, include=TRUE}
+model.final2 <- lm(Official.Time.Min ~ X30.42K.Rank+M.F+Age, data=bm_2017)
+summary(model.final2)
+vif(model.final2)
+```
+In a model predicting the official time by fourth quarter rank, gender, and age, slope/intercept value is 173 and is significant (p<.001). All predictors, fourth quarter rank, gender, and age significatly predict total users (p<0.001). R2 (adjusted) is .832, which means that 83.2% of variability in the offical time is explained by fourth quarter rank, gender, and age. The VIFs are 1.09-1.13, representing low multicollinearity.
+
+One unit increase in fourth quarter rank positively impacts (+0.0048) official time. Being male (vs. female) negatively impacts (-10.70) official time. One unit increase in age positively impacts (0.1792) official time.
+
+```{r, include=TRUE}
+model.overall2 <- lm(Overall ~ X30.42K.Rank+M.F+Age, data=bm_2017)
+summary(model.overall2)
+vif(model.overall2)
+```
+
+In the improved overall rank predicting model, p value is down to less than 0.001, which means all variables are significant now. And VIF are also between 1.09 to 1.13, which means low multicollinearity. R2 (adjusted) is .9016, which means that 90.16% of variability in the offical time is explained by fourth quarter rank, gender, and age. So the model has been improved in an appropriate way, and fourth quater rank, gender and age all contribute to overall rank. 
+
+One unit increase in fourth quarter rank positively impacts (+0.8916) overall rank. Being male (vs. female) negatively impacts (-2521) overall rank. One unit increase in age positively impacts (58.24) overall rank.
+
+## Official Time Distribution among Different Group
+From the following two plots, we can see overall rank and official time's distribution are related to the fourth quarter rank, gender, and age.
+```{r}
+ggplot(data=bm_2017)+
+  geom_point(mapping = aes(x=X30.42K.Rank, y=Overall, color=M.F))+
+  ggtitle("Scatter plot of participants Overall Rank vs Forth Quarter Rank (group by gender)")+xlab('Rank of Forth Quarter')+ylab('Overall Rank')
+```
+```{r}
+ggplot(data=bm_2017)+
+  geom_point(mapping = aes(x=Age, y=Official.Time.Min, color=M.F))+
+  ggtitle("Scatter plot of participants Official Time vs Age (group by gender)")+xlab('Age')+ylab('Official Time')
+```
+
+## KNN Analysis
+And we explored whether we could predict participants' ranks in 4 categories if we got their information about age, gender and the rank of forth quarter. We classified official time into four parts by order of official time.  
+
+```{r, include=TRUE}
+class1<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.25)#top 25% participants finished the race in 208 minutes
+class2<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.5)#top 50% participants finished the race in 232 minutes
+class3<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.75)#top 75% participants finished the race in 262 minutes
+class4<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,1)#top 100% participants finished the race in 478 minutes
+fast0.25_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<class1) #We select top25% participants
+fast0.5_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<class2 &bm_2017$Official.Time.Min>class1) #We select top 25-50% participants
+fast0.75_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<class3 &bm_2017$Official.Time.Min>class2) #We select bottom 50-75% participants
+fast1.0_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<class4 &bm_2017$Official.Time.Min>class3) #We select bottom 75-100% participants
+```
+
+```{r}
+#Setting "class" variable
+bm_2017$class[bm_2017$Official.Time.Min<class4]='4' #run these in order (Ruijin - I changed these bc class4 wasn't working for some reason)
+bm_2017$class[bm_2017$Official.Time.Min<class3]='3'
+bm_2017$class[bm_2017$Official.Time.Min<class2]='2'
+bm_2017$class[bm_2017$Official.Time.Min<class1]='1'
+```
+```{r}
+bm_2017$M.F1[bm_2017$M.F=='M']=0
+bm_2017$M.F1[bm_2017$M.F=='F']=1
+```
+
+Then we ran the KNN test. 
+```{r knn, include=FALSE, echo=FALSE}
+set.seed(1)
+bm_2017 <- na.omit(bm_2017)
+knndata<-bm_2017[c('class','Age','X30.42K.Rank','M.F1')]
+
+class_sample <- sample(2, nrow(bm_2017), replace=TRUE, prob=c(2/3, 1/3))
+class_training <- knndata[class_sample==1,2:4]
+class_test <- knndata[class_sample==2, 2:4]
+
+head(class_training)
+head(class_test)
+
+class.trainLabels <- knndata[class_sample==1, 1]
+class.testLabels <- knndata[class_sample==2, 1]
+head(class.trainLabels)
+```
+
+```{r}
+chooseK = function(k, train_set, val_set, train_class, val_class){
+  
+  # Build knn with k neighbors considered.
+  set.seed(1)
+  class_knn = knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                                        #   If true, all distances equal to the kth 
+                                        #   largest are included
+  
+  tab = table(class_knn, val_class)
+  
+  # Calculate the accuracy.
+  accu = sum(tab[row(tab) == col(tab)]) / sum(tab)                         
+  cbind(k = k, accuracy = accu)
+}
+
+# The sapply() function plugs in several values into our chooseK function.
+# function(x)[function] allows you to apply a series of numbers
+# to a function without running a for() loop.
+knn_different_k = sapply(seq(1, 21),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                                             train_set = class_training,
+                                             val_set = class_test,
+                                             train_class = class.trainLabels,
+                                             val_class = class.testLabels))
+
+# Reformat the results to graph the results.
+str(knn_different_k)
+knn_different_k = data.frame(k = knn_different_k[1,],
+                             accuracy = knn_different_k[2,])
+knn_different_k
+
+# Plot accuracy vs. k.
+# install.packages("ggplot2")
+loadPkg("ggplot2")
+
+ggplot(knn_different_k,
+       aes(x = k, y = accuracy)) +
+  geom_line(color = "light green", size = 1.5) +
+  geom_point(size = 3)
+```
+
+It seems 12-nearest neighbors (with accuracy rate of 72.5%) is a decent choice because that's the greatest improvement in predictive accuracy before the incremental improvement trails off. So we could predict the level of the participants by their age, rank of forth quarter and gender. The cross Table of Actual/Predicted is the following:
+
+```{r}
+class_pred <- knn(train=class_training, test=class_test, cl=class.trainLabels, k=12)
+library("gmodels")
+CLASSPREDCross <- CrossTable(class.testLabels, class_pred, prop.chisq = FALSE)
+```
+
+# <span style="color:navy"> Split PCA Analysis </span>
+
+```{r, include=FALSE}
+#bm_2017 <- read.csv('marathon_results_2017.csv')
+head(bm_2017)
+str(bm_2017)
+
+splits <- subset(bm_2017, select = c(Age, M.F, X5K, X10K, X15K, X20K, Half, X25K, X30K, X35K, X40K, Official.Time))
+head(splits)
+str(splits)
+
+sum(is.na(splits))
+colSums(splits == '' | splits == '-')
+col_names <- colnames(splits)
+for(col in col_names){
+  splits <- splits[!(is.na(splits[col]) | splits[col] == '' | splits[col] == '-'), ] 
+}
+colSums(splits == '' | splits == '-')
+```
+
+```{r TimeConversionFunction, include=FALSE}
+splits$X5K <- as.character(splits$X5K)
+splits$X5K <- period_to_seconds(hms(splits$X5K))/60
+splits$X10K <- as.character(splits$X10K)
+splits$X10K <- period_to_seconds(hms(splits$X10K))/60
+splits$X15K <- as.character(splits$X15K)
+splits$X15K <- period_to_seconds(hms(splits$X15K))/60
+splits$X20K <- as.character(splits$X20K)
+splits$X20K <- period_to_seconds(hms(splits$X20K))/60
+splits$Half <- as.character(splits$Half)
+splits$Half <- period_to_seconds(hms(splits$Half))/60
+splits$X25K <- as.character(splits$X25K)
+splits$X25K <- period_to_seconds(hms(splits$X25K))/60
+splits$X30K <- as.character(splits$X30K)
+splits$X30K <- period_to_seconds(hms(splits$X30K))/60
+splits$X35K <- as.character(splits$X35K)
+splits$X35K <- period_to_seconds(hms(splits$X35K))/60
+splits$X40K <- as.character(splits$X40K)
+splits$X40K <- period_to_seconds(hms(splits$X40K))/60
+splits$Official.Time <- as.character(splits$Official.Time)
+splits$Official.Time <- period_to_seconds(hms(splits$Official.Time))/60
+str(splits)
+sum(is.na(splits))
+```
+
+## Linear Regression 1
+
+Let us predict the Official time of the marathon by using all the predictor variables in the data.
+
+```{r lm1, include = TRUE}
+model1 <- lm(Official.Time ~ Age + M.F + X5K + X10K + X15K + X20K + Half + X25K + X30K + X35K + X40K, data = splits)
+summary(model1)
+vif(model1)
+plot(calc.relimp(model1, type = c("lmg"), rela = TRUE))
+```
+In the model predicting the Official time of the marathon using Age, Gender and all the split times, we can see that all the coefficients are not significant. Only the intercept, Age and some of the split times are significant. 
+R2(Adjusted) is .99 which is almost close to 1. This is because we have used all the split times till 40K. So, the model is explaining 99% of the variability in the Official time using all the split times, Gender, Age. 
+But, the main problem is with the multicollinearity in the data. If we look at the vif values of the split times, they are more than 10 and this suggests that there is lot of multicollinearity in the data. We will overcome this by using PCA, PCR.
+Before that, let's just predict the Official time of the marathon using Age, Gender and Half time of the marathon.
+
+## Linear Regression 2
+
+```{r lm2, include = TRUE}
+model2 <- lm(Official.Time ~ Age + M.F + Half, data = splits)
+summary(model2)
+vif(model2)
+plot(calc.relimp(model2, type = c("lmg"), rela = TRUE))
+```
+In this model, we predict the Official time of the marathon with Age, Gender and Half time of the marathon. All the coefficients are statistically significant. R2(Adjusted) is .8993. This means it is explaining 89% of the variability in Official Times with Age, Gender and Half time. And also, VIF values are 1.15, 1.22, 1.23 which indicates that there is no multicollinearity.
+
+## PCA and PCR
+
+Let us see whether we can apply Principal Component Analysis and Regression to our split times.
+
+```{r PCAanalysis, include=FALSE}
+split_scaled = data.frame(scale(splits[,3:11]))
+
+pr.out = prcomp(split_scaled , scale = TRUE)
+
+summary(pr.out)
+pr.out$rotation
+```
+
+```{r biplot, include=TRUE}
+biplot(pr.out, scale = 0, sub='Centered Data')
+```
+
+```{r, include=TRUE}
+#Let us plot the cumulation of variance using the sd
+pr.var <- (pr.out$sdev^2)
+pve <- pr.var/sum(pr.var)
+plot(cumsum(pve), xlab="Principal Components", ylab ="Cumulative Proportion of Variance Explained",ylim=c(0,1),type="b")
+```
+Principal Component analysis of the split times suggest that 1st Principal Component i.e PC1 covers 97% of the variance in the data. PC1 and PC2 cover 99% of the variance in the data. We can observe this in the above plot.
+Let us perform regression analysis based on the Principal Component Analysis which is Principal Component Regression(PCR). We can validate the R2 based on the number of componenets used.
+
+```{r pcrmodel, include=TRUE}
+#Again we want to scale our data and "CV" stands for cross validation, which is defaulted to RMSE.
+pcrfit=pcr(Official.Time~X5K + X10K + X15K + X20K + Half + X25K + X30K + X35K + X40K, data = splits, scale = TRUE,validation ="CV")
+summary(pcrfit)
+validationplot(pcrfit,val.type="RMSEP")
+validationplot(pcrfit,val.type="MSEP")
+validationplot(pcrfit,val.type = "R2")
+predplot(pcrfit, ncomp = 2)
+coefplot(pcrfit)
+```
+
+In the Principal Component Regression, 1 component cover 97% of the variance in the split times and 92% of the variance in the Official time where as 2 components cover 99% of the variance in the split times and 98% of the variance in the Official time. 
+R2 value is close to .95 if we consider 1 component and it is close to .98 if we considered 2 compoenents i.e 2 principal components cover 98% of the variance in the Official time.
+
+# <span style="color:navy">Analysis using different models</span>
+
+```{r Reading the csv file}
+bm_2017<-read.csv('marathon_results_2017.csv')
+str(bm_2017)
+bm <- bm_2017
+```
+
+## Preprocessing and Exploration
+Let's drop columns that are not required and handle missing values in the dataset
+```{r missingvalues_count}
+colSums(is.na(bm))
+colSums(bm == '' | bm == '-')
+```
+
+```{r drop columns and handle missing values}
+bm <- subset(bm, select =-c(X.1, X, Proj.Time, Citizen, State))
+col_names <- colnames(bm)
+for(col in col_names){
+  bm <- bm[!(is.na(bm[col]) | bm[col] == '' | bm[col] == '-'), ]
+}
+colSums(is.na(bm))
+colSums(bm == '' | bm == '-')
+```
+There are `r nrow(bm)` rows after dropping the columns and removing NA and blank values.
+
+```{r time_to_minutes}
+bm$X5K <- as.character(bm$X5K)
+bm$X5K.Min <- period_to_seconds(hms(bm$X5K))/60
+bm$X10K <- as.character(bm$X10K)
+bm$X10K.Min <- period_to_seconds(hms(bm$X10K))/60
+bm$X15K <- as.character(bm$X15K)
+bm$X15K.Min <- period_to_seconds(hms(bm$X15K))/60
+bm$X20K <- as.character(bm$X20K)
+bm$X20K.Min <- period_to_seconds(hms(bm$X20K))/60
+bm$Half <- as.character(bm$Half)
+bm$Half.Min <- period_to_seconds(hms(bm$Half))/60
+bm$X25K <- as.character(bm$X25K)
+bm$X25K.Min <- period_to_seconds(hms(bm$X25K))/60
+bm$X30K <- as.character(bm$X30K)
+bm$X30K.Min <- period_to_seconds(hms(bm$X30K))/60
+bm$X35K <- as.character(bm$X35K)
+bm$X35K.Min <- period_to_seconds(hms(bm$X35K))/60
+bm$X40K <- as.character(bm$X40K)
+bm$X40K.Min <- period_to_seconds(hms(bm$X40K))/60
+bm$Official.Time <- as.character(bm$Official.Time)
+bm$Official.Time.Min <- period_to_seconds(hms(bm$Official.Time))/60
+```
+
+Let's Calculate Pace of the runners between each time split. Pace is calculated as time taken per km. So if your pace is 5' 20" and you have your measurement set to metric, it means you have taken 5 mins & 20 secs to run each kilometer. Lower values mean you are travelling faster. For 2017 Boston marathon, total distance that needs to be covered by runner is 42.195 km. So for half time, runner has to cover 21.1 km.
+```{r calculating pace}
+bm$Pace0k.5k <- bm$X5K.Min/5    # Pace during first 5 km
+bm$Pace5k.10k <- (bm$X10K.Min - bm$X5K.Min)/5 # Pace during 5km and 10km
+bm$Pace10k.15k <- (bm$X15K.Min - bm$X10K.Min)/5 # Pace during 10km and 15km
+bm$Pace15k.20k <- (bm$X20K.Min - bm$X15K.Min)/5 # Pace during 15km and 20km
+bm$Pace20k.Half <- (bm$Half.Min - bm$X20K.Min)/(21.1-20) # Pace during 20km and 21.1km(Half time)
+bm$PaceHalf.25k <- (bm$X25K.Min - bm$Half.Min)/(25-21.1) # Pace during 21.1km(Half time) and 25km
+bm$Pace25k.30k <- (bm$X30K.Min - bm$X25K.Min)/5 # Pace during 25km and 30km
+bm$Pace30k.35k <- (bm$X35K.Min - bm$X30K.Min)/5 # Pace during 30km and 35km
+bm$Pace35k.40k <- (bm$X40K.Min - bm$X35K.Min)/5 # Pace during 35km and 40km
+bm$Pace40k.officialtime <- (bm$Official.Time.Min - bm$X40K.Min)/(42.2-40) # Pace during 40km and 42.2km(Official time)
+```
+
+### Extracting features and Targets
+Let's subset age and pace columns until the Half time from the dataset which will be features for our models and will be predicting the Official Time.
+```{r Extract_data}
+# bm_2017_pace = bm[,c('Age','M.F','Pace0k.5k','Pace5k.10k','Pace10k.15k','Pace15k.20k','Pace20k.Half','PaceHalf.25k','Pace25k.30k','Pace30k.35k','Pace35k.40k','Official.Time.Min')]
+
+bm_2017_pace = bm[,c('Age','M.F','Pace0k.5k','Pace5k.10k','Pace10k.15k','Pace15k.20k','Pace20k.Half','Official.Time.Min')]
+```
+
+### Train and Test splits
+Let's split the dataset into 70% train set and 30% test set and setting the seed to 1 so that there is no randomness in our split data.
+```{r train_test_split}
+#Dividing the data into training and testing sets with 70% train and 30% test
+set.seed(1)
+bm_2017_train_rows = sample(1:nrow(bm_2017_pace),
+                            round(0.7 * nrow(bm_2017_pace), 0),
+                            replace = FALSE)
+
+train1 <- bm_2017_pace[bm_2017_train_rows, ]
+test <- bm_2017_pace[-bm_2017_train_rows, ]
+
+X_train = model.matrix(Official.Time.Min~., train1)[,-1]
+X_test = model.matrix(Official.Time.Min~., test)[,-1]
+y_train = train1$Official.Time.Min
+y_test = test$Official.Time.Min
+```
+
+### Correlation Matrix
+Let's plot correlation matrix of training data.
+```{r correlation_matrix, include=TRUE}
+corr_matrix <- cor(cbind(X_train,y_train))
+ggcorrplot(corr_matrix, hc.order = TRUE, type = "lower", lab = TRUE, outline.col = "white", ggtheme = ggplot2::theme_gray, colors = c("#6D9EC1", "white", "#E46726"))
+```
+
+We can observe that there exists a multi-collinearity between the pace variables and also the pace variables are strongly correlated with Official Time.
+
+### Standardizing the Train and Test Data
+In contrast to the ordinary least square regression, ridge regression is highly affected by the scale of the predictors. Therefore, it is better to standardize (i.e., scale) the predictors before applying the Ridge and Lasso regression, so that all the predictors are on the same scale. So let's scale X_train, X_test, y_train and y_test.
+```{r standardizing}
+num_cols = colnames(X_train[,c(1,3:7)])
+X_train_scaled = scale(X_train[,num_cols])
+#applying the mean and sd from the scaled training set to test set using the attr from scaled X_train
+X_test_scaled = scale(X_test[,num_cols], center=attr(X_train_scaled, "scaled:center"),
+                              scale=attr(X_train_scaled, "scaled:scale"))
+
+y_train_scaled = scale(y_train)
+#applying the mean and sd from the scaled training set to test set using the attr from scaled y_train
+y_test_scaled = scale(y_test, center=attr(y_train_scaled, "scaled:center"),
+                              scale=attr(y_train_scaled, "scaled:scale"))
+```
+
+## Models
+### Ordinary Least Squares (OLS)
+Let's build an Ordinary Least Squares model using our train data and predict official time with test data.
+```{r OLS, include=TRUE}
+ols.mod = lm(Official.Time.Min~., data = train1)
+summary(ols.mod)
+vif(ols.mod)
+ols.pred <- predict(ols.mod, newdata = test[ ,-length(test)])
+data.frame(
+  R2 = caret::R2(ols.pred, test$Official.Time.Min),
+  RMSE = RMSE(ols.pred, test$Official.Time.Min),
+  MAE = MAE(ols.pred, test$Official.Time.Min)
+)
+par(mfrow=c(1,1))
+plot(test$Official.Time.Min, ols.pred, xlab = 'Observed Official Time', ylab = 'Predicted Official Time')
+plot(calc.relimp(ols.mod, type=c("lmg"), rela = TRUE), names.abbrev = 15, main = 'Relative importance for Official Time')
+```
+
+`r caret::R2(ols.pred, test$Official.Time.Min)*100`% variability in Official time is explained by the predictor variables. Pace between 15k and 20k and Pace between 20k and 21.1k(Half time) are top two important features in determining the official time. We can also observe from vif values that there exists a multi-collinearity between independent variables. So let's build a model which will help us in solving multi-collinearity problem.
+
+### Ridge Regression
+Ridge regression shrinks the coefficients of the independent variables to prevent multicollinearity. We need to calculate the regularization parameter lambda that adjusts the amount of coefficient shrinkage. The best lambda for the data, can be defined as the lambda that minimize the cross-validation prediction error rate. This can be determined using the function cv.glmnet().
+```{r ridge_regression, include=TRUE}
+grid=10^seq(10,-2,length=100) # prepare log scale grid for λ values, from 10^10 to 10^-2, in 100 segments
+ridge.mod=glmnet(X_train_scaled,y_train_scaled,alpha=0,lambda=grid)
+plot(ridge.mod)
+set.seed(1)
+cv.out=cv.glmnet(X_train_scaled,y_train_scaled,alpha=0)  # Fit ridge regression model on training data
+plot(cv.out)
+bestlam = cv.out$lambda.min  # Select lambda that minimizes training MSE
+```
+
+The first vertical dotted line is where the lowest MSE is. The second vertical dotted line is within one standard error. The labels of above the graph shows how many non-zero coefficients in the model. The best lambda value found here is `r bestlam`. Let's predict the Official time for test data using the best lambda value.
+
+```{r ridge predict, include=TRUE}
+ridge.pred=predict(ridge.mod,s=bestlam,newx=X_test_scaled)
+mean((ridge.pred-y_test_scaled)^2)
+data.frame(
+  MAE = MAE(ridge.pred, y_test_scaled),
+  RMSE = RMSE(ridge.pred, y_test_scaled),
+  R2 = caret::R2(ridge.pred, y_test_scaled)
+)
+out=glmnet(X_train, y_train,alpha=0)
+predict(out,type="coefficients",s=bestlam)[2:8,]
+```
+We got an r-square value of `r caret::R2(ridge.pred, y_test_scaled)*100`% using Ridge regression.
+
+### The Lasso
+Lasso regression also reduces the multi-collinearity between variables by shrinking the coefficients to zero. The same function glmnet( ) with alpha set to 1 will build the Lasso regression model. 
+
+```{r lasso_regression, include=TRUE}
+lasso.mod=glmnet(X_train_scaled,y_train_scaled,alpha=1,lambda=grid)
+plot(lasso.mod)
+set.seed(1)
+cv.out=cv.glmnet(X_train_scaled,y_train_scaled,alpha=1)
+plot(cv.out)
+bestlam = cv.out$lambda.min  # Select lambda that minimizes training MSE
+```
+Here, we see that the lowest MSE is when $\lambda$ appro = 0.00465. It has 5 non-zero coefficients.
+
+```{r lasso predict, include=TRUE}
+lasso.pred=predict(lasso.mod,s=bestlam,newx=X_test_scaled)
+mean((lasso.pred-y_test_scaled)^2)
+data.frame(
+  MAE = MAE(ridge.pred, y_test_scaled),
+  RMSE = RMSE(ridge.pred, y_test_scaled),
+  R2 = caret::R2(ridge.pred, y_test_scaled)
+)
+out = glmnet(X_train, y_train, alpha = 1, lambda = grid) # Fit lasso model on full dataset
+lasso_coef = predict(out, type = "coefficients", s = bestlam)[2:8,] # Display coefficients using λ chosen by CV
+lasso_coef
+lasso_coef[lasso_coef!=0]
+```
+
+The main problem with lasso regression is when we have correlated variables, it retains only one variable and sets other correlated variables to zero. That will possibly lead to some loss of information resulting in lower accuracy in our model.
+
+### Decision tree
+```{r Decision_Tree, include=TRUE}
+dt.fit <- rpart(Official.Time.Min ~ .,method="anova", data=train1)
+rsq.rpart(dt.fit)
+plot(dt.fit, uniform=TRUE, main="Decision Tree")
+text(dt.fit, use.n=TRUE, all=TRUE, digits=5, cex=.8)
+dt.pred <- predict(dt.fit, test[ ,-length(test)])
+data.frame(
+  R2 = caret::R2(dt.pred, test$Official.Time.Min),
+  RMSE = RMSE(dt.pred, test$Official.Time.Min),
+  MAE = MAE(dt.pred, test$Official.Time.Min)
+)
+```
+
+We got an r-square value of `r caret::R2(dt.pred, test$Official.Time.Min)*100`% using Decision Tree.
+The main disadvantage of decision tree is that, we get low bias and high variance predictions when we have sufficient depth in the tree. High variance means decision tree model changes a lot with changes in training data resulting in changes in accuracy. In order to control the variance, we go for a technique called Bagging.
+
+### Bagging Tree
+In Bagging, we take ensemble of models having low bias and high variance as the base model. By doing ensembling of models, we get low bias and low variance predictions. Below we are building an ensemble of decision trees using treebag method.
+```{r Bagging_Tree, include=TRUE}
+ctrl <- trainControl(method = "CV", number = 10)
+bagged_cv <- train(Official.Time.Min ~ ., data = train1, method = "treebag",trcontrol = ctrl,importance = TRUE, verbose = TRUE)
+plot(varImp(bagged_cv),7)
+bagging_pred <- predict(bagged_cv, test[ ,-length(test)])
+data.frame(
+  R2 = caret::R2(bagging_pred, test$Official.Time.Min),
+  RMSE = RMSE(bagging_pred, test$Official.Time.Min),
+  MAE = MAE(bagging_pred, test$Official.Time.Min)
+)
+```
+
+We got an r-square value of `r caret::R2(bagging_pred, test$Official.Time.Min)*100`% using Bagging Tree. The main disadvantage of bagging is that the predictions from the decision trees are highly correlated. In order to reduce the correlation between decision trees, we go for Random forest model.
+
+### Random Forest
+Random Forest is an extension of Bagging where we subset the features along with bootstrap of rows with replacement.
+```{r Random_Forest, include=TRUE}
+set.seed(1)
+rf.model <- randomForest(Official.Time.Min ~ ., data = train1, ntree = 100)
+summary(rf.model)
+print(rf.model)
+plot(importance(rf.model))
+rf_pred <- predict(bagged_cv, test[ ,-length(test)])
+data.frame(
+  R2 = caret::R2(rf_pred, test$Official.Time.Min),
+  RMSE = RMSE(rf_pred, test$Official.Time.Min),
+  MAE = MAE(rf_pred, test$Official.Time.Min)
+)
+```
+
+We got an r-square value of `r caret::R2(rf_pred, test$Official.Time.Min)*100`% using Random Forest.
+
+### Gradient Boosting
+Boosting is another approach for improving the predictions resulting from Decision Tree.
+In Gradient Boosting, we build ensemble of decision trees sequentially and the predictions of individual trees are summed sequentially. Every decision tree tries to recover the loss (difference between actual and predicted values) by fitting the tree on residuals of the previous tree. This results in model with better accuracy.
+```{r gradient_boosting}
+gb_model <- gbm(Official.Time.Min ~ ., data = train1, distribution = "gaussian",n.trees = 500, shrinkage = 0.01, interaction.depth = 4, cv.folds = 3)
+predict_gbm <- predict(gb_model, test[ ,-length(test)], n.trees = 100)
+data.frame(
+  R2 = caret::R2(predict_gbm, test$Official.Time.Min),
+  RMSE = RMSE(predict_gbm, test$Official.Time.Min),
+  MAE = MAE(predict_gbm, test$Official.Time.Min)
+)
+summary(gb_model)
+```
+We got an r-square value of `r caret::R2(predict_gbm, test$Official.Time.Min)*100`% using Gradient Boosting. 
+We can see that Pace between 15k and 20k and Pace between 20k and 21.1K are by far the most important variables in our gbm model.
+
+### xgboost
+Extreme Gradient Boosting or xgboost gives better approximations of predictions over gradient boosting and computationally it is fast in training the data.
+```{r xgboost}
+xgboost_model <- xgboost(data = X_train, 
+                         label = as.matrix(y_train),
+                         max_depth = 3, 
+                         objective = "reg:squarederror", 
+                         nrounds = 10, 
+                         verbose = FALSE,
+                         prediction = TRUE)
+
+predict_xgboost <- predict(xgboost_model,X_test)
+data.frame(
+  R2 = caret::R2(predict_xgboost, test$Official.Time.Min),
+  RMSE = RMSE(predict_xgboost, test$Official.Time.Min),
+  MAE = MAE(predict_xgboost, test$Official.Time.Min)
+)
+```
+
+We got an r-square value of `r caret::R2(predict_xgboost, test$Official.Time.Min)*100`% using Gradient Boosting. 
+
+## Conclusion
+* Out of all the models, xgboost is having the better r-square value of `r caret::R2(predict_xgboost, test$Official.Time.Min)*100`%.
+* We can see that Pace between 15k and 20k and Pace between 20k and 21.1K are by far the top two important variables in all the models. So if a runner has better pace between 15k and 20k and 20k to 21.1k has the better chance of winning the race.
+
+
+# <span style="color:navy"> Distance Traveled Analysis </span>
+
+## Background
+
+In our previous data exploration, we conducted extensive analysis of how a runner's hometown affected finishing time.  We found strong differneces amongst home states and home countries, with faster runners coming from African countires like Ethiopia and Kenya and slower runners coming from New England states near the start of the marathon.
+
+We were curious to see if the distance traveled had a more direct relationship with finishing time.  To answer this question, we had to do some feature engineering.  In data science, we rarely have all the data needed and frequenlty need to build our own features based on some aspects of the existing data. 
+
+To attak this problem, we leveraged work from a previous class using Python to pass place names to Google Map's geocoding API, which returns locational metadata including lattitude and longitude.  To determine distance between a runner's provided hometown and the race start, we built a custom function to calculate the distance using the haversine forumla.  All details are included in the attached Jupyter Notebook and html files.  Once the caclulations were complete, the distance traveled for each runner was merged back with our original dataset using bib number as a unique identifier.
+
+```{r, echo=FALSE, include=FALSE}
+# read in the csv with the new feature 'dist', which repersents distance traveled from hometown.
+bm_2017 <- read.csv('bm_2017_with_distances.csv')
+
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get 
+```
+
+## Linear Regression Fitting and Analysis
+
+First we will build a linear model, and then use that model to predict the finishing time for each runner as a function of the distance traveled from their hometown.  Once we build the model, we can plot the actual data with the predicted data as a line.  As you can see from the plot below, there appears to be a very weak negative correlation between distance traveled and finishing time.  Let's examine the model output for more details.
+
+```{r}
+# subset the larger df to just the needed data.  be sure to omit NAs
+distances_df <- na.omit(subset(bm_2017, select = c(Bib, Official.Time.Min, dist)))
+
+# we then fit the linear regression using finishing time as a function of the distance traveled
+fit_lin <- lm(Official.Time.Min ~ dist, data = distances_df)
+
+# create a new variable to store the predicted values for each distance traveled
+fit_lin.pred <- add_predictions(distances_df, fit_lin)
+
+# generate a new column in the df for the difference between the official time and the prediction time for manual review and validation.
+fit_lin.pred$diff <- fit_lin.pred$Official.Time.Min - fit_lin.pred$pred
+```
+
+```{r, include = T}
+ggplot(fit_lin.pred,aes(dist,Official.Time.Min)) + 
+  geom_point(aes(dist,Official.Time.Min)) + 
+  geom_line(aes(dist,pred), colour="red", size=1) +
+  xlab("Distance Traveled from Hometown") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Linear Regression of Distance from Hometown vs. Finishing Time") 
+```
+
+```{r}
+# return details of the model and the summary
+#summary(fit_lin)
+
+# use this to break out the p-value from the summary.  Its the first row of the fourth column
+p.lm <- summary(fit_lin)$coefficients[2, 4]
+coef.lm <-  summary(fit_lin)$coefficients[2, 1]
+
+# return the vif
+vif_lin <- vif(fit_lin)
+```
+
+We can further analyze the model by looking at specific outputs.  The R-squared value of this model is `r round(summary(fit_lin)$adj.r.squared, 5)`.  The p-value for the distance term is `r round(p.lm, 5)`.  The coefficent for the distance variable is `r  round(coef.lm, 5)`.  The VIF is `r vif_lin`.
+
+These outputs confirm what we saw from the plot.  For every mile further away a runner's home town is, a runner is expected to run `r  abs(round(coef.lm, 5))` minutes faster.  However, we can see that this model is a very poor fit for the data with very high error residuals.
+
+## Conclusions
+
+This is an excellent example that really detailed feature engineering and even a very small p-value does not lead to a good model.  Distance traveled results in a low adjusted R-squared value of `r round(p.lm, 5)`, which is definitely stastically significant.  However, the model has little predictive power because of its low adjusted R-squared value and obviously large error residuals.  

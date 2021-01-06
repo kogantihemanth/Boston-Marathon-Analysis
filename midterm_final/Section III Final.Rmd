@@ -1,0 +1,828 @@
+---
+title: "Mid-Term, Section III"
+author: <span style="color:green">Team Why Axis?</span>
+date: <span style="color:green">10/9/2019</span>
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+loadPkg('lubridate') # used from time conversions
+library(lubridate)
+loadPkg('dplyr') # varios data transfers
+library(dplyr)
+loadPkg('ggplot2') # plotting and mapping
+library(ggplot2)
+loadPkg('usmap') # making chloropleths
+library(usmap)
+loadPkg("stats") 
+loadPkg("car") # for vif
+loadPkg("corrplot")
+loadPkg("BSDA")  #for z-test
+loadPkg("viridis")
+```
+
+# <span style="color:navy"> What do we know about this dataset? </span>
+
+Our group chose to analyze data from the Boston Marathon in 2015-2017.  Most of our work focuses on 2017, but we conducted analysis across all three years of data.  The total size of the dataset is about 26,000 rows with 25 fields for each year.  Fields include demographic information (age, gender, hometown and/or country) for each runner, the finishing time for each runner, and periodic times runners reached certain milestones along the course.  A full data dictionary of all fields is included in Section II.
+
+Marathons are long-distance running events popular across the world.  The total distance of a marathon is 26.2 miles (42.195km), a distance deeply rooted in ancient Greek history. Despite the progenitor’s untimely death running from Marathon to Athens following the Greek defeat of a Persian invasion, half a million Americans ran a marathon in 2018.  In 2019, there are 716 marathons scheduled just in the US ("Marathon Statistics").  Even more runners complete the grueling distance every year around the world. 
+
+Finishing times vary widely from elites to amateurs, but one credible source cited a median finishing time as 4 hours and 22 minutes. ("General Marathon Stats", 2019).  The fastest marathon on record was just completed in October 2019 by Eliud Kipchoge of Kenya, who finished the first marathon under two hours.  Most marathons have an average “cut-off” time of about six and a half hours.  Runners still on the course are pulled off at the cut-off time, whether they have finished or not.
+
+The Boston Marathon is a special race.  It is not only the oldest annual marathon in the world — first run in 1897 — but it is also a near-sacred race for many runners.  Boston is unique in major races in having an aggressive qualifying time for nearly all runners.  For example, a 28 year-old man must complete a certified marathon course in under 3 hours within a year of the race to be eligible to run the Boston Marathon.  Known as Boston Qualifying times—or “BQs” to runners—these times are revised downward every year as runners continue to get faster.  Many runners will work for years to earn a BQ just for the opportunity to run the world’s most famous marathon.  For perspective, one source assesses that a 3-hour marathon places a 28-year old male runner in the top 4% of runners who have completed at least one marathon.
+
+Therefore, we should know that our marathon data here is not representative of all marathon runners.  We are already dealing mostly with runners who have completed at least one marathon and have done so at a pace far faster than the average runner.  Additionally, the race is quite popular with elite runners, who can skew our analysis even further towards faster times.  Finally, we cannot rule out that some runners may train extensively to qualify and then “relax” with an easier, slower run than they are capable of.  It is worth noting that about one-fifth of entrants can get around the BQ time-requirement by fundraising for charity.  
+
+# <span style="color:navy"> Limitations of the Dataset </span>
+
+There are a few limitations with this dataset.  First, our data is limited to only one race, which we have already identified as non-representative of all marathons.  We will need to be careful with extrapolating any conclusions from this data and applying them beyond past or future runnings of the Boston Marathon.  Additionally, we lack additional information for each runner that could help analyze their finishing times.  For example, a runner’s fastest qualifying time would be helpful in binning “fast” runners from “slower” runners or those running for a charity that did not need to qualify.  We could also conduct additional analysis if we knew how many marathons a runner had completed and what their average time was.  That would allow us to compare past performance to their activity in this data.  One field in the data--"Proj.Time”—was likely submitted by each runner and included their hoped for finishing time.  Unfortunately, this field is blank and prevents us from doing some interesting analysis on how accurate different ages and genders are in predicting their finishing time.
+
+# <span style="color:navy"> How was the data gathered? </span>
+
+The data was gathered by the Boston Athletic Association (BAA) directly from the runners.  Most marathons — including Boston — use an electronic “chip” timer to accurately track each runner’s time crossing the start line, the finish line, and usually a series of checkpoints along the course.  In this dataset, we have times at multiple checkpoints at 5k intervals throughout the race ("Timing and Scoring", 2019) .  Much of the demographic data in this dataset was submitted by the users, and we have little reason to question its accuracy.  Our version of this data was accessed from Kaggle ("Finishers Boston Marathon 2015, 2016 & 2017", 2017), where it was posted by a marathon runner who completed the 2016 and 2017 race.  The poster also claims to be a “data science student” and links to a GitHub account that includes the code he used to scrape the BAA’s website to create this dataset ("Boston_results", 2017).  To ensure that we could trust these data, we reviewed his Python code and cross-checked finishing times from his data with the BAA’s website.  
+
+# <span style="color:navy"> What analysis has already been completed? </span>
+
+Numerous blogs have done analysis of Boston Marathon data before and many people are interested in analyzing marathon data.  The fact that this data was taken from Kaggle is itself an example of interest in analyzing marathons.  This particular Kaggle dataset has not seen much activity with only 59 “likes” and only a handful of kernels with significant data analysis, almost all of which were done in Python ("Finishers Boston Marathon 2015, 2016 & 2017", 2017).  Most of the analysis we have seen in other places such as blogs or magazine articles so far has been basic summary statistics for a lay person, which differs from the rigorous statistical analysis “Why-Axis?” will apply in this project.
+
+# <span style="color:navy"> Gender, Age, and Ranks Analysis </span>
+
+In this section, we looked at the differences in runners' performance (measured by their official time) by gender and age. We also explore how the runners' performance throughout the race impact their final rank. 
+
+```{r, echo=FALSE, include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+str(bm_2017)
+```
+
+```{r convering time in X:XX:XX format to minutes (in number)}
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get actual minutes ran
+```
+
+## <span style="color:purple"> Gender and Age </span>
+```{r Some descriptive Data}
+#Gender
+gender.table <- table(bm_2017$M.F)
+gender.freq <- as.data.frame(gender.table)
+female.freq <- subset(gender.freq, Var1=="F")
+male.freq <- subset(gender.freq, Var1=="M")
+
+#Official Time by Gender
+group_by(bm_2017, M.F) %>%
+  summarise(
+    count = n(),
+    mean = mean(Official.Time.Min, na.rm = TRUE),
+    sd = sd(Official.Time.Min, na.rm = TRUE)
+  )
+
+```
+```{r Boxplot gender_official time, include=T}
+boxplot(Official.Time.Min ~ M.F, data=bm_2017, 
+        ylab="Official Time in Minutes", xlab="Gender",
+        main="Official Time by Gender", col=c("#00AFBB", "#E7B800"))
+
+boxplot(Age ~ M.F, data=bm_2017, 
+        ylab="Age (years)", xlab="Gender",
+        main="Age by Gender", col=c("light pink", "light green"))
+```
+
+There are 11972 female and 14438 male participants in the data frame. The boxplot shows distribution of official time by gender and age by gender. Generally, male runners in the race tended to be older and faster.
+
+```{r T-test for age by gender}
+bm_2017<- na.omit(bm_2017)
+bm_2017$M.F <- as.factor(bm_2017$M.F)
+OTGenderAge.ttest <- t.test(Age ~ M.F, data = bm_2017)
+OTGenderAge.ttest
+```
+Looking at the age differences by gender, Women's age (x=39.9) is siginificantly different from men's age (x=44.8) (p<0.001).
+
+```{r T-test for average running time by gender}
+bm_2017<- na.omit(bm_2017)
+bm_2017$M.F <- as.factor(bm_2017$M.F)
+OTGender.ttest <- t.test(Official.Time.Min ~ M.F, data = bm_2017)
+OTGender.ttest
+```
+Looking at differences in official time by gender, Women's average oficial time (im minutes) (x=249) is siginificantly different from men's average official time (x=229) (p<0.001).
+
+```{r T-test for average half time by gender}
+#Half time variable converted to minutes in number
+bm_2017$Half <- as.character(bm_2017$Half)
+bm_2017$Half.Min <- period_to_seconds(hms(bm_2017$Half))/60
+
+HTGender.ttest <- t.test(Half.Min ~ M.F, data = bm_2017)
+HTGender.ttest
+names(HTGender.ttest)
+```
+We further explore if male runners are faster than women all throughout race or if they are faster just in the end. We looked at the official time's effect on the time it took for the runners to get to the half of the race (half time). We found that women's average half time (x=117) is siginificantly different from men's average half time (x=105), p<0.001).
+
+```{r Age correlation to official time}
+model.OfficialAge <- lm(Official.Time.Min ~ Age, data=bm_2017)
+summary(model.OfficialAge)
+coef(model.OfficialAge)
+confint(model.OfficialAge)
+```
+Because we know distribution of age is different among men and women, we looked at the runners' age in relationship with official time. The slope/intercept value is 202.66 and is significant (p<.001). One year increase in age increases 0.8313 minute (about 50 seconds) official time (p<0.001). Adjusted R squared is low at 0.0507. The older you get, the slower you will be.
+
+## <span style="color:purple"> Interim Ranks and Final Rank </span>
+```{r half time correlation to official time - simple linear model}
+model.OfficialHalf <- lm(Official.Time.Min ~ Half.Min, data=bm_2017)
+summary(model.OfficialHalf)
+coef(model.OfficialHalf)
+confint(model.OfficialHalf)
+```
+We also wanted to look at how the runners' performances throughout the race impacts their final rank. In a model exploring half time's relationship with official time, slope/intercept value is -3.04 and is significant (p<.001). One minute increase in Half Time increases 2.18 minutes of official time (p<0.001). Adjusted R squared is high at 0.894.
+
+```{r Ranks at each interval (in 4 quarters) predicting  overall rank}
+#creating intervals of time
+bm_2017$X10K <- as.character(bm_2017$X10K)
+bm_2017$X10K.Min <- period_to_seconds(hms(bm_2017$X10K))/60
+bm_2017$X20K <- as.character(bm_2017$X20K)
+bm_2017$X20K.Min <- period_to_seconds(hms(bm_2017$X20K))/60
+bm_2017$X30K <- as.character(bm_2017$X30K)
+bm_2017$X30K.Min <- period_to_seconds(hms(bm_2017$X30K))/60
+bm_2017$X40K <- as.character(bm_2017$X40K)
+bm_2017$X40K.Min <- period_to_seconds(hms(bm_2017$X40K))/60 #Did not end up using this one
+
+bm_2017$X0.10K.Min <- bm_2017$X10K.Min #time between 0-10K
+bm_2017$X10.20K.Min <- bm_2017$X20K.Min-bm_2017$X10K.Min #time between 10-20K
+bm_2017$X20.30K.Min <- bm_2017$X30K.Min-bm_2017$X20K.Min #time between 20-30K
+bm_2017$X30.42K.Min <- bm_2017$Official.Time.Min-bm_2017$X30K.Min #time between 30-42.195K (end)
+
+bm_2017$X0.10K.Rank <- rank(bm_2017$X0.10K.Min) #rank during first quarter 0-10K
+bm_2017$X10.20K.Rank <- rank(bm_2017$X10.20K.Min) #rank during second quarter 10-20K
+bm_2017$X20.30K.Rank <- rank(bm_2017$X20.30K.Min) #rank during third quarter 20-30K
+bm_2017$X30.42K.Rank <- rank(bm_2017$X30.42K.Min) #rank during last quarter 30-42.195K
+
+#Cor matrix and plot
+str(bm_2017)
+Ranks <- c("Overall", "X0.10K.Rank", "X10.20K.Rank", "X20.30K.Rank", "X30.42K.Rank")
+bm_2017.Ranks <- bm_2017[Ranks]
+
+RanksCor = cor(bm_2017.Ranks) # creating correlation matrix between all ranks.
+```
+
+```{r Ranks Cor matrix and plots, include=F}
+corrplot(RanksCor, method = "number")
+```
+
+```{r Overall rank ~ ranks at each interval}
+model.RankInterval <- lm(Overall ~ X0.10K.Rank+X10.20K.Rank+X20.30K.Rank+X30.42K.Rank, data=bm_2017)
+summary(model.RankInterval)
+vif(model.RankInterval)
+```
+Since the dataset included the runners' time at eact 5km of the race, new variables were created to represent the time it took to complete each quarter of the race and those times were ranked to represent their rank each quarter. 
+
+In a model exploring relationship between Rank at various intervals of race (0-10K, 10-20K, 20-30K, 30-42.195K) and overall (finishing) rank, slope/intercept value is -.0686 and is significant (p<.001). 
+
+* One rank increase during the first quarter of the race (0-10K) increased 0.186 overall rank (p<0.001). 
+* One rank increase during the second quarter of the race (10-20K) increased 0.175 overall rank (p<0.001). 
+* One rank increase during the third quarter of the race (20-30K) increased 0.291 overall rank (p<0.001). 
+* One rank increase during the last quarter of the race (30-40K) increased 0.400 overall rank (p<0.001). 
+Adjusted R squared is high at 0.99. There is concerning amount of collinearity with rank between 10-20K (vif=23.77) and rank between 20-30K (vif=17.98). 
+
+While we see that a runner's performance during all four quarters of the race contributes to his/her final rank, the fourth, and final, quarter seems to contirbute the most to how he/she will rank at the end of the race.
+
+
+```{r, include=FALSE}
+m2017 <- read.csv('marathon_results_2017.csv')
+m2016 <- read.csv('marathon_results_2016.csv')
+m2015 <- read.csv('marathon_results_2015.csv')
+head(m2017)
+str(m2017)
+str(m2015)
+str(m2016)
+m2017 <- subset(m2017, select = -c(X.1, Proj.Time))
+m2016 <- subset(m2016, select = -c(X, Proj.Time))
+m2015 <- subset(m2015, select = -c(X.1, Proj.Time))
+```
+
+
+```{r TimeConversionFunction, include=FALSE}
+m2017$Official.Time <- as.character(m2017$Official.Time)
+m2017$Official.Time.Min <- period_to_seconds(hms(m2017$Official.Time))/60
+
+m2016$Official.Time <- as.character(m2016$Official.Time)
+m2016$Official.Time.Min <- period_to_seconds(hms(m2016$Official.Time))/60
+
+m2015$Official.Time <- as.character(m2015$Official.Time)
+m2015$Official.Time.Min <- period_to_seconds(hms(m2015$Official.Time))/60
+```
+
+
+# <span style="color:navy"> Additional Age Analysis </span>
+
+In this section of analysis, we will look at how age impacts official time of the runners. We have divided the age groups according to the USATF (USA Track & Field) standard i.e 5 years and also kept in mind the number of runners in each age group. In 2017 Boston Marathon, the minimum age of the participants is `r min(m2017$Age)` and the maximum age of the participants is `r max(m2017$Age)`.  Usually, marathons and other long distance events use 19 and under as the youngest age group. Following this, we have divided the age groups as 18-24, 25-29, 30-34, 35-39, 40-44, 45-49, 50-54, 55-59, and 60+ years. 
+
+```{r, include=FALSE}
+m2017$agegroup <- NA
+m2017$agegroup[m2017$Age >= 18 & m2017$Age <= 24] <- '18-24'
+m2017$agegroup[m2017$Age >= 25 & m2017$Age <= 29] <- '25-29'
+m2017$agegroup[m2017$Age >= 30 & m2017$Age <= 34] <- '30-34'
+m2017$agegroup[m2017$Age >= 35 & m2017$Age <= 39] <- '35-39'
+m2017$agegroup[m2017$Age >= 40 & m2017$Age <= 44] <- '40-44'
+m2017$agegroup[m2017$Age >= 45 & m2017$Age <= 49] <- '45-49'
+m2017$agegroup[m2017$Age >= 50 & m2017$Age <= 54] <- '50-54'
+m2017$agegroup[m2017$Age >= 55 & m2017$Age <= 59] <- '55-59'
+m2017$agegroup[m2017$Age >= 60] <- '60+'
+m2017$agegroup <- as.factor(m2017$agegroup)
+
+```
+
+First, we look at the total number of runners for each age group.
+
+```{r, include=TRUE, echo=FALSE, warning=FALSE}
+ggplot(data = m2017, aes(x = agegroup, fill = agegroup)) + geom_histogram(stat="count") + labs(title = 'Number of runners in each age group in Boston Marathon 2017') + xlab("Age Group") + ylab("Number of runners") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+By looking at the bar chart divided according to the number of runners in each age group, we observe that there are more than 1000 runners in each age group. There seems to be active participation in the 45-49 age group. There are fewer number of participants in the 18-24 age group. Now, lets look at the boxplot of Official time by age group so we can observe the trends across age groups.
+
+
+```{r, include=TRUE, echo=FALSE, warning=FALSE}
+qplot(agegroup, Official.Time.Min, data = m2017, geom = "boxplot", fill = agegroup, 
+           xlab = "Age Group", ylab = "Official Time in Minutes") + labs(title = 'Boxplot of Official Time in Minutes by Age Group') + theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+By looking at the boxplot, we can observe that there isn't much difference in the average official time of age groups from 18-24 to 45-49. However, the average running times differ from age of 50. Also, the distribution of some of the age groups looks the same except for a few outliers.  The boxplot suggests that runners in age group 30-34 are faster compared to other age groups.  Runners in the 60+ age group are the slowest.
+
+
+```{r, include=FALSE}
+m2017_ag1 <- subset(m2017, agegroup == '18-24')
+m2017_ag2 <- subset(m2017, agegroup == '25-29')
+m2017_ag3 <- subset(m2017, agegroup == '30-34')
+m2017_ag4 <- subset(m2017, agegroup == '35-39')
+m2017_ag5 <- subset(m2017, agegroup == '40-44')
+m2017_ag6 <- subset(m2017, agegroup == '45-49')
+m2017_ag7 <- subset(m2017, agegroup == '50-54')
+m2017_ag8 <- subset(m2017, agegroup == '55-59')
+m2017_ag9 <- subset(m2017, agegroup == '60+')
+```
+
+
+```{r, include=FALSE}
+set.seed(98452)
+
+sample_ag1 <- m2017_ag1[ sample(nrow(m2017_ag1),50), ]
+sample_ag2 <- m2017_ag2[ sample(nrow(m2017_ag2),50), ]
+sample_ag3 <- m2017_ag3[ sample(nrow(m2017_ag3),50), ]
+sample_ag4 <- m2017_ag4[ sample(nrow(m2017_ag4),50), ]
+sample_ag5 <- m2017_ag5[ sample(nrow(m2017_ag5),50), ]
+sample_ag6 <- m2017_ag6[ sample(nrow(m2017_ag6),50), ]
+sample_ag7 <- m2017_ag7[ sample(nrow(m2017_ag7),50), ]
+sample_ag8 <- m2017_ag8[ sample(nrow(m2017_ag8),50), ]
+sample_ag9 <- m2017_ag9[ sample(nrow(m2017_ag9),50), ]
+sample_ag <- rbind(sample_ag1, sample_ag2, sample_ag3, sample_ag4, sample_ag5, sample_ag6, sample_ag7,sample_ag8, sample_ag9)
+```
+
+
+## <span style="color:purple"> Official Time Across Age Groups </span>
+
+To check whether age groups have any impact on the official time, we subset the data according to age groups and sampled 50 observations from each subset and performed ANOVA test to compare the means of the official times across the different age groups.
+
+Null Hypothesis: There is no significant difference between the means of official times across different age groups i.e in other words, age has no significant impact in finishing times of runners.
+
+```{r, include=FALSE, echo=FALSE}
+aovags <- aov(data = sample_ag, Official.Time.Min ~ agegroup)
+summary(aovags)
+Fcritical_ags <- qf(p = 0.95, df1 = 8, df2 = 441)
+Fcritical_ags
+```
+
+According to the results of the ANOVA test, p-value `r aovags$p.value` is less than the significance level 0.05. Therefore, we reject the null hypothesis that there is no difference between the means.  However, after reviewing the Tukey comparison of means, most of the difference was in older runners above 55.
+
+```{r, include=FALSE, echo=FALSE }
+tukeyaovags <- TukeyHSD(aovags)
+tukeyaovags
+```
+
+## <span style="color:purple"> Official Time Across Age Groups Excluding 55+ Age Groups </span>
+
+We omitted the age groups 55-59 and 60+ and performed ANOVA for the remaining age groups.
+
+Null Hypothesis: There is no significant difference between the means of run times across different age groups i.e in other words, age has no significant impact in finishing times of runners.
+
+```{r, include=FALSE, echo=FALSE}
+sample_agb55 <- rbind(sample_ag1, sample_ag2, sample_ag3, sample_ag4, sample_ag5, sample_ag6, sample_ag7)
+aovagsb55 <- aov(data = sample_agb55, Official.Time.Min ~ agegroup)
+summary(aovagsb55)
+Fcritical_agsb55 <- qf(p = 0.95, df1 = 6, df2 = 343)
+Fcritical_agsb55
+```
+
+After performing the test, we got a p-value of `r aovagsb55$p.value` by which we fail to reject the null hypothesis that there is no difference between the means.
+
+In conclusion, in the 2017 Boston Marathon, if the runner's age falls below 55 age groups, age is really not a factor in deciding the official time of the marathon.
+
+# <span style="color:navy"> Nationality/Continent Analysis </span>
+In this section, we look at whether average official time differs among different continents, and for fast runners, whether official time is different among different regions. Moreover, we analyze whether cách runner's home continent has effect on official time. 
+
+First, we divided over 90 countries into six continents: Oceania, Africa, Europe, Americas, Asia and U.S.A. (Since the most of runners are from the U.S., we considered US as an independent continent). Then we give analysis how official time distributed among different countries. The result of official time-continents is shown below:
+
+```{r,echo=FALSE,warning=FALSE, include=TRUE}
+library(countrycode)
+bm_2017$Country1<-as.vector(bm_2017$Country)
+bm_2017$Continent<-'USA'
+bm_2017$Continent[bm_2017$Country!='USA'] <- countrycode(sourcevar = bm_2017[, "Country1"],origin = "iso3c",destination = "continent")
+bm_2017_ContinentNA<-subset(bm_2017,is.na(bm_2017$Continent))
+bm_2017$Continent[bm_2017$Country=='JPN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='BRA']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='GBR']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='COL']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HKG']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='CHN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='IRL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='SWE']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='GER']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='CAY']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='CAN']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='GRE']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='TWN']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='MEX']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='ESP']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='DEN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='LUX']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='BEL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='FRA']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='KOR']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='ITA']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='POL']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='ARG']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='AUS']<-'Oceania'
+bm_2017$Continent[bm_2017$Country=='CHI']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='LTU']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='COL']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='FIN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='PER']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HON']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='CZE']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='THA']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='SUI']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='PHI']<-'Asia'
+bm_2017$Continent[bm_2017$Country=='NED']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='ECU']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='SVK']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='RSA']<-'Africa'
+bm_2017$Continent[bm_2017$Country=='GUA']<-'Americas'
+bm_2017$Continent[bm_2017$Country=='HUN']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='RUS']<-'Europe'
+bm_2017$Continent[bm_2017$Country=='KEN']<-'Africa'
+bm_2017$Continent[bm_2017$Country=='ETH']<-'Africa'
+#to check whether we can convert all contries into continent
+bm_2017_ContinentNA2<-subset(bm_2017,is.na(bm_2017$Continent))
+ggplot(data=bm_2017)+
+  geom_point(mapping=aes(x=Continent, y=Official.Time.Min, color=Age))+
+  ggtitle("Scatter plot of finish time & continent by age")+labs(x='Country',y='Official Time in Minutes')
+```
+
+By looking at the boxplot, we can see official time in Africa group is much lower than others. Other than the Africa group, all other groups have outliers. We expect Africa group's average official time is lower and is different from others. We remove outliers and randomly take 50 samples from each group (excluding Africa, since Africa group has less than 50 runners) to do ANOVA test. According to ANOVA test result, p-value is small, so we reject the null hypothesis that mean of official finished time are same, and our expectation is right. Tukry's comparison of means shows besides two groups of runners -- who are from Oceania and Americas, Oceania and Europe, other continents have the different official time.
+
+```{r,echo=FALSE, include=TRUE}
+boxplot(bm_2017$Official.Time.Min ~ Continent, data=bm_2017,col='yellow',xlab="Continent", ylab="Official Time in Minutes", main='Boxplot of Finishing Time(All Runners)')
+```
+```{r,echo=FALSE,include=FALSE}
+outlierKD <- function(dt, var) { 
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     #response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
+     response = "y"
+     if(response == "y" | response == "yes"){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+outlierKD(bm_2017, Official.Time.Min)
+set.seed(123)
+sample_Asia <- subset(bm_2017,bm_2017$Continent=='Asia')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Asia')),50), ]
+sample_Europe <- subset(bm_2017,bm_2017$Continent=='Europe')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Europe')),50), ]
+sample_America <- subset(bm_2017,bm_2017$Continent=='Europe')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Europe')),50), ]
+sample_USA <- subset(bm_2017,bm_2017$Continent=='USA')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='USA')),50), ]
+sample_Oceania <- subset(bm_2017,bm_2017$Continent=='Oceania')[ sample(nrow(subset(bm_2017,bm_2017$Continent=='Oceania')),50), ]
+sample_Africa<-subset(bm_2017,bm_2017$Continent=='Africa')
+samples <- rbind(sample_Asia,sample_Europe,sample_America,sample_USA,sample_Oceania,sample_Africa)
+aovcontinent<-aov(Official.Time.Min~Continent,data=samples)
+summary(aovcontinent)
+tukeyaovcontinent<-TukeyHSD(aovcontinent)
+tukeyaovcontinent
+```
+
+## <span style="color:purple"> Top 25% Fast Runners </span>
+Next, we explore whether official time is still distributed differently among faster runners. We selected 25% of all runners who have shortest official time. The runners who finished race less than 207 minutes would be in this top layer. Boxplot shows African runners still run faster than other five groups. ANOVA test result shows p-value is small, so we reject null hypothesis that all groups have same means. Tukey's comparison of means shows African is the different one, and the remaining groups have the same official time. The result show how fast African runners are, since they still display outstanding results among the top 25% fastest runners.
+
+```{r,include=FALSE,echo=FALSE}
+top25<-quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.25)
+top25
+fast_bm_2017<-subset(bm_2017,bm_2017$Official.Time.Min<quantile(bm_2017$Official.Time.Min,na.rm=TRUE,0.25))
+```
+```{r,echo=FALSE, include=TRUE}
+boxplot(fast_bm_2017$Official.Time.Min ~ Continent, data=fast_bm_2017,col='green',xlab='Continent',ylab='Official Time in Minutes',main='Boxplot of Finishing Time(Top 25% Runners)')
+```
+```{r,include=FALSE,echo=FALSE}
+aovfast<-aov(Official.Time.Min~Continent,data=fast_bm_2017)
+summary(aovfast)
+tukeyaovfast<-TukeyHSD(aovfast)
+tukeyaovfast
+```
+
+## <span style="color:purple"> Independence of Continent and Finishing Time </span>
+Last past in this section is to explore whether continent and official time are independent in fast group. We utilized the Chi-sq test, and result show p-value is small, so we reject the null hypothesis that two are independent. Therefore, continent has effect on official time among the fast group.
+
+```{r,include=FALSE, include=TRUE}
+conttable<-table(fast_bm_2017$Continent,fast_bm_2017$Official.Time.Min)
+chitest<-chisq.test(conttable,simulate.p.value = TRUE)
+chitest
+```
+Conclusion: (1) Continent has effect on official time (2) Both for all runners or top 1/4 runners, average official time is different in different continents, and African runners are the fasted group.
+
+# <span style="color:navy"> Home State Analysis </span>
+
+In this section we will analyze how much an impact your homestate has on your average official time.  Specifically, how do runners from Massachusetts, the home state of the marathon, compare to the rest of the runners? 
+
+```{r}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get actual minutes ran
+times_states <- bm_2017[,c('State', 'Official.Time.Min', 'Country')]
+summary(times_states)
+# I used the subset function to create a new dataframe with just the runners who live in USA. 
+us <- subset(times_states, Country=='USA') 
+# I also use the 'droplevels' function to remove factor levels that are no longer used. 
+us$State <- droplevels(us)$State 
+# Then, I can drop the country field since I no longer need it.
+us <- select(us, -Country)
+str(us)
+```
+
+In the 2017 Boston Marathon, there were `r format(nrow(us), big.mark=",")` runners from the United States.  The median is `r round (median(us$Official.Time.Min), 2)`, but the mean is `r round (mean(us$Official.Time.Min), 2)`, suggesting a significant right tail. 
+
+We have 57 total states in the dataframe.  In addition to the 50 states, there are runners from DC, Guam, the Virgin Islands, Puerto Rico, and three military overseas postal codes.     
+
+```{r}
+state_counts <- aggregate(us$State, list(us$State), length)
+state_means <- aggregate(us$Official.Time.Min, list(us$State), mean)
+states_df <- merge(state_counts, state_means, by='Group.1') # combine our two aggregated dataframes together
+names(states_df) <- c('State', 'Total_Runners', 'Average_Time') # rename the columns
+
+us_with_totals <- merge(us, states_df, by='State', all.x = T, all.y = F) 
+names(us_with_totals) <- c('State', 'Official.Time.Min', 'Total_Runners_by_State', 'Average_Time_by_State')
+
+us_with_totals_subset <- subset(us_with_totals, Total_Runners_by_State > 60)
+```
+
+From this boxplot, we see Massachusetts (MA) has more runners but a slower average official time than any other state.
+
+```{r, include=T}
+ggplot(data = us_with_totals_subset, aes(x = (State), y = Official.Time.Min)) + 
+  geom_boxplot(aes(fill=Total_Runners_by_State),width = .9) +
+  ggtitle('Boxplot of Average Official Times by State, Colored by Total Runners') +
+  labs(x='State', y='Average Official Time (minutes)',  subtitle='Minimum of 60 runners required per state') +
+  scale_fill_continuous(name='Total Runners by State', low='light yellow', high='gold')
+```
+
+In the barchart, we can see that the three slowest states are MA, New Hampshire (NH), and Rhode Island (RI), all states near Boston.  Maine (ME) and Connecticut (CT), two other New England states, are also amongst the slowest ten.  The final state in New England, Vermont (VT), did better but was still in the slowest half.
+
+```{r, include=T}
+ggplot(data=us_with_totals_subset, aes(x=(reorder(State, -Average_Time_by_State)),  fill=Average_Time_by_State)) +
+  geom_bar(stat = "count") +
+  ggtitle('Barchart of Total Runners by State, Colored by Average Official Time') +
+  labs(x='State', y='Count of Runners', subtitle='Sorted by average official time when more than 60 runners finished') +
+  scale_fill_continuous(name='Avg Official Time')
+```
+
+The choropleth colored by average official time for each state also supports the finding that states in New England are slower than other states.
+
+```{r, include=TRUE}
+
+loadPkg('usmap') # making chloropleths
+library(usmap)
+
+# get a dataframe with more than 60 runners
+us_with_totals_subset <- subset(us_with_totals, Total_Runners_by_State > 60)
+
+# the usmap package only works if there are two columns, the state ID and the variable to be plotted.
+map_count <- data.frame(us_with_totals_subset$State, us_with_totals_subset$Average_Time_by_State)
+names(map_count) <- c('state','total')
+# lets drop all the duplicates now since this dataframe had 20,000 observations
+map_count <- map_count[!duplicated(map_count),]
+# and lets drop all the states that arent in our 50 state map.
+map_count <- subset(map_count, !(state %in% c('AA', 'AE', 'AP', 'GU', 'PR', 'DC', 'VI')))
+
+plot_usmap(regions='states', data=map_count, values='total')   +
+  theme(legend.position = 'right')  +
+  ggtitle('Choropleth of of Average Official Time, 50 US States') +
+  labs(subtitle='States with less than 60 runners finishing are colored grey.') +
+  scale_fill_continuous(name='Avg Official Time (minutes)', limits=(c(220,270)), 
+                        breaks = c(220, 235, 250, 265), type = "viridis")
+```
+
+```{r}
+new_england <- subset(us_with_totals, (State %in% c('ME', 'VT', 'NH', 'MA', 'RI', 'CT')))
+summary(new_england)
+mean(new_england$Official.Time.Min)
+
+not_new_england <- subset(us_with_totals, !(State %in% c('ME', 'VT', 'NH', 'MA', 'RI', 'CT')))
+summary(not_new_england)
+mean(not_new_england$Official.Time.Min)
+
+```
+
+If we dig deeper into the data, we see more evidence that New England is slower.  In fact, the mean official time for New Englanders is `r round(mean(new_england$Official.Time.Min),2)` minutes compared to `r round(mean(not_new_england$Official.Time.Min),2)` minutes for Non-New Englanders.
+
+## <span style="color:purple"> The Rest of the US vs. New England </span>
+
+These means seem different enough for us to conduct a two-sample T-test between New England states and non-New England states.  We will group our US runners into New England (MA, ME, CT, RI, VT, NH) and non-New England states.  Then, we'll take 50 random samples from each category and conduct the T-test.  The null hypothesis is that there is no difference in mean official times for states in New England compared to the rest of the US, while the alternative hypothesis is there will be a difference.  
+
+```{r}
+set.seed(12345)
+
+not_new_england_subset <- subset(not_new_england, Total_Runners_by_State > 60)
+not_ne <- not_new_england_subset %>% group_by(State) %>% sample_n(50)
+not_ne$region <- 'Not_New_England'
+
+new_england_subset <- subset(new_england, Total_Runners_by_State > 60)
+ne <- new_england_subset %>% group_by(State) %>% sample_n(50)
+ne$region <- 'New_England'
+
+ttest = t.test(ne$Official.Time.Min, not_ne$Official.Time.Min)
+ttest
+ttest$p.value
+```
+The test returns a very low p-value of `r round(ttest$p.value, 5)`, telling us we should reject the null hypothesis.  Average race times from New England appear different from averages around the rest of the country.
+
+## <span style="color:purple"> Average Finishing Times Across the US without New England </span>
+
+If we filter out New England states, how different are the average official times for the rest of the country?  We can limit our analysis to the 35 non-New England states that had more than 60 runners to prevent small numbers of runners creating an extreme mean time.  Then, we'll take 50 random samples from each state and  conduct an ANOVA analysis.  The null hypothesis is that there is no difference amongst means from non-New England states with at least 60 runners.  The alternative is that there is a difference. 
+
+
+```{r}
+set.seed(12345)
+
+not_new_england_subset <- subset(not_new_england, Total_Runners_by_State > 60)
+not_ne <- not_new_england_subset %>% group_by(State) %>% sample_n(50)
+
+anovaRes = aov(Official.Time.Min ~ State, data=not_ne)
+anovaRes
+summary(anovaRes)
+```
+
+The ANOVA analysis returns a high p-vale of `r round(summary(anovaRes)[[1]][["Pr(>F)"]][1],5)`, meaning we fail to reject the null hypothesis.  It looks like there is a high level of consistency for the average run time across the US outside of New England.
+
+# <span style="color:navy"> Analysis of Three-Year Race Data: 2015, 2016, and 2017. </span>
+In this section, we will be looking at performance of different age groups over the years. We will also look at the official times of repeat runners and first time runners and any trends in their average official times.
+```{r, echo=FALSE}
+bm_2015 <- read.csv("marathon_results_2015.csv", header = TRUE)
+bm_2016 <- read.csv("marathon_results_2016.csv", header = TRUE)
+bm_2017 <- read.csv("marathon_results_2017.csv", header = TRUE)
+bm_2017$year <- "2017"
+bm_2016$year <- "2016"
+bm_2015$year <- "2015"
+bm_2015$Official.Time <- as.character(bm_2015$Official.Time)
+bm_2015$Official.Time.Min <- period_to_seconds(hms(bm_2015$Official.Time))/60
+bm_2016$Official.Time <- as.character(bm_2016$Official.Time)
+bm_2016$Official.Time.Min <- period_to_seconds(hms(bm_2016$Official.Time))/60
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time)
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60
+bm_2015 <- subset(bm_2015, select =-c(X.1,X,Proj.Time))
+bm_2016 <- subset(bm_2016, select =-c(X, Proj.Time))
+bm_2017 <- subset(bm_2017, select =-c(X.1, X, Proj.Time))
+```
+
+```{r, echo=FALSE}
+summary(bm_2015)
+summary(bm_2016)
+summary(bm_2017)
+```
+## <span style="color:purple"> Official Time for Each Age Group Over the Years</span>
+```{r, echo=FALSE, include=TRUE}
+bm_2017$agegroup[bm_2017$Age >= 18 & bm_2017$Age <= 24] <- '18-24'
+bm_2017$agegroup[bm_2017$Age >= 25 & bm_2017$Age <= 29] <- '25-29'
+bm_2017$agegroup[bm_2017$Age >= 30 & bm_2017$Age <= 34] <- '30-34'
+bm_2017$agegroup[bm_2017$Age >= 35 & bm_2017$Age <= 39] <- '35-39'
+bm_2017$agegroup[bm_2017$Age >= 40 & bm_2017$Age <= 44] <- '40-44'
+bm_2017$agegroup[bm_2017$Age >= 45 & bm_2017$Age <= 49] <- '45-49'
+bm_2017$agegroup[bm_2017$Age >= 50 & bm_2017$Age <= 54] <- '50-54'
+bm_2017$agegroup[bm_2017$Age >= 55 & bm_2017$Age <= 59] <- '55-59'
+bm_2017$agegroup[bm_2017$Age >= 60] <- '60+'
+bm_2017$agegroup <- as.factor(bm_2017$agegroup)
+agmean2017 <- aggregate(bm_2017$Official.Time.Min ~ bm_2017$agegroup, FUN=mean)
+names(agmean2017) <- c('agegroup', 'avg.official.time')
+ggplot(agmean2017,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("Age Group")+
+        ylab("Mean Official Time in Minutes")+
+        ggtitle("Mean Official Time of Age groups for the Year 2017") +
+        theme(plot.title = element_text(hjust = 0.5))
+
+bm_2016$agegroup[bm_2016$Age >= 18 & bm_2016$Age <= 24] <- '18-24'
+bm_2016$agegroup[bm_2016$Age >= 25 & bm_2016$Age <= 29] <- '25-29'
+bm_2016$agegroup[bm_2016$Age >= 30 & bm_2016$Age <= 34] <- '30-34'
+bm_2016$agegroup[bm_2016$Age >= 35 & bm_2016$Age <= 39] <- '35-39'
+bm_2016$agegroup[bm_2016$Age >= 40 & bm_2016$Age <= 44] <- '40-44'
+bm_2016$agegroup[bm_2016$Age >= 45 & bm_2016$Age <= 49] <- '45-49'
+bm_2016$agegroup[bm_2016$Age >= 50 & bm_2016$Age <= 54] <- '50-54'
+bm_2016$agegroup[bm_2016$Age >= 55 & bm_2016$Age <= 59] <- '55-59'
+bm_2016$agegroup[bm_2016$Age >= 60] <- '60+'
+bm_2016$agegroup <- as.factor(bm_2016$agegroup)
+agmean2016 <- aggregate(bm_2016$Official.Time.Min ~ bm_2016$agegroup, FUN=mean)
+names(agmean2016) <- c('agegroup', 'avg.official.time')
+ggplot(agmean2016,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("Age Group")+
+        ylab("Mean Official Time in Minutes")+
+        ggtitle("Mean Official Time of Age groups for the Year 2016") +
+        theme(plot.title = element_text(hjust = 0.5))
+
+bm_2015$agegroup[bm_2015$Age >= 18 & bm_2015$Age <= 24] <- '18-24'
+bm_2015$agegroup[bm_2015$Age >= 25 & bm_2015$Age <= 29] <- '25-29'
+bm_2015$agegroup[bm_2015$Age >= 30 & bm_2015$Age <= 34] <- '30-34'
+bm_2015$agegroup[bm_2015$Age >= 35 & bm_2015$Age <= 39] <- '35-39'
+bm_2015$agegroup[bm_2015$Age >= 40 & bm_2015$Age <= 44] <- '40-44'
+bm_2015$agegroup[bm_2015$Age >= 45 & bm_2015$Age <= 49] <- '45-49'
+bm_2015$agegroup[bm_2015$Age >= 50 & bm_2015$Age <= 54] <- '50-54'
+bm_2015$agegroup[bm_2015$Age >= 55 & bm_2015$Age <= 59] <- '55-59'
+bm_2015$agegroup[bm_2015$Age >= 60] <- '60+'
+bm_2015$agegroup <- as.factor(bm_2015$agegroup)
+agmean2015 <- aggregate(bm_2015$Official.Time.Min ~ bm_2015$agegroup, FUN=mean)
+names(agmean2015) <- c('agegroup', 'avg.official.time')
+
+ggplot(agmean2015,aes(agegroup,avg.official.time, fill=agegroup))+
+        geom_col()+
+        xlab("Age Group")+
+        ylab("Mean Official Time in Minutes")+
+        ggtitle("Mean Official Time of Age Groups for the Year 2015") +
+        theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the above bar plots, we can see that 30-34 Age group has the lowest average official time over the years. So, we can conclude that 30-34 Age group people are performing well compared to other Age groups in all the years.
+
+## <span style="color:purple"> Official Time of Top Four Countries with Highest Number of Runners Over the Years</span>
+```{r, echo=F, include=TRUE, warning=FALSE}
+comean.official.time.2017 <- aggregate(bm_2017$Official.Time.Min ~ bm_2017$Country, FUN=mean)
+names(comean.official.time.2017) <- c('Country', 'avg.official.time')
+co.runners.count.2017 <- aggregate(bm_2017$Name ~ bm_2017$Country,FUN = length)
+names(co.runners.count.2017) <- c('Country', 'Total.Runners')
+countries_df_2017 <- merge(co.runners.count.2017, comean.official.time.2017, by='Country')
+countries_df_2017 <- countries_df_2017[order(countries_df_2017$avg.official.time),]
+countries_df_2017$year <- "2017"
+
+comean.official.time.2016 <- aggregate(bm_2016$Official.Time.Min ~ bm_2016$Country, FUN=mean)
+names(comean.official.time.2016) <- c('Country', 'avg.official.time')
+co.runners.count.2016 <- aggregate(bm_2016$Name ~ bm_2016$Country,FUN = length)
+names(co.runners.count.2016) <- c('Country', 'Total.Runners')
+countries_df_2016 <- merge(co.runners.count.2016, comean.official.time.2016, by='Country')
+countries_df_2016 <- countries_df_2016[order(countries_df_2016$avg.official.time),]
+countries_df_2016$year <- "2016"
+
+comean.official.time.2015 <- aggregate(bm_2015$Official.Time.Min ~ bm_2015$Country, FUN=mean)
+names(comean.official.time.2015) <- c('Country', 'avg.official.time')
+co.runners.count.2015 <- aggregate(bm_2015$Name ~ bm_2015$Country,FUN = length)
+names(co.runners.count.2015) <- c('Country', 'Total.Runners')
+countries_df_2015 <- merge(co.runners.count.2015, comean.official.time.2015, by='Country')
+countries_df_2015 <- countries_df_2015[order(countries_df_2015$avg.official.time),]
+countries_df_2015$year <- "2015"
+
+country.official_time <- rbind(countries_df_2015, countries_df_2016, countries_df_2017)
+country.official_time <- country.official_time[order(-country.official_time$Total.Runners),]
+```
+
+USA, Canada, UK and Mexico are the top four countries with highest number of runners in all the three years.
+
+```{r, echo=FALSE, warning=FALSE, include=TRUE}
+tr_country <- subset(country.official_time, country.official_time$Country %in% c('USA', 'CAN', 'GBR', 'MEX'))
+ggplot(tr_country, aes(x = year,y = avg.official.time, fill=year)) +
+        geom_bar(position="dodge",stat="identity") +
+        scale_fill_viridis(discrete = T, option = "E") +
+        ggtitle("Average Official Time of top 4 Countries with highest number of runners over the years") +
+        theme(plot.title = element_text(hjust = 0.5)) +
+        facet_wrap(~Country) +
+        xlab("Year") +
+        ylab("Mean Official Time in Minutes")
+```
+
+
+As we can see from the barplot, there is very slight increase in average official time for top four countries with highest number of runners over the three years.
+
+## <span style="color:purple"> Official Time Over the Years</span>
+Now let's see whether the average official time over the years is the same by combining the sample data taken from each year and then perform ANOVA analysis on the official time with respect to year.
+
+Null hypothesis: There is no difference in the means of official time of runners over the years.
+
+```{r, echo=FALSE, include=TRUE}
+set.seed(2402)
+sample_2017 <- bm_2017[sample(nrow(bm_2017),50),c('year', 'Official.Time.Min')]
+sample_2016 <- bm_2016[sample(nrow(bm_2016),50),c('year', 'Official.Time.Min')]
+sample_2015 <- bm_2015[sample(nrow(bm_2015),50),c('year', 'Official.Time.Min')]
+
+official_time_sample <- rbind(sample_2017, sample_2016, sample_2015)
+anoveRes.official.time <- aov(Official.Time.Min ~ year, data=official_time_sample)
+summary_official_time <- unlist(summary(anoveRes.official.time))
+tuckey.results <- TukeyHSD(anoveRes.official.time)
+tuckey.results
+boxplot(Official.Time.Min ~ year, data = official_time_sample, xlab="Year", ylab="Official Time in Minutes", main="Official Time of runners over 3 years", col=c("#87ceeb", "#FFA500", "#ffc0cb"))
+```
+
+p value `r summary_official_time["Pr(>F)1"]` is greater than 0.05. Also from the Tukey comparison of means result, we can see the probability value is greater than 0.05 for all comparisons. So, we fail to reject the null hypothesis and we can conclude that the means of the official time is same for three years.
+
+## <span style="color:purple"> First Time and Third Time Runners</span>
+First let's see whether there are any runners participated in all the three years.
+```{r, echo=FALSE}
+bm_2015$Age_compare_2015_2016 <- bm_2015$Age + 1
+bm_2016$Age_compare_2015_2016 <- bm_2016$Age
+both <- merge(bm_2015, bm_2016, by=c("Name","Age_compare_2015_2016"))
+both$Age_compare_2016_2017 <- both$Age_compare_2015_2016 + 1
+bm_2017$Age_compare_2016_2017 <- bm_2017$Age
+both1 <- merge(bm_2017, both, by=c("Name","Age_compare_2016_2017"))
+```
+There are total `r nrow(both)` runners participated in both 2015 and 2016 race and there are `r nrow(both1)` runners participated in all the three years.
+
+Now let's take 2017 marathon data and see whether the performance of repeat runners is better than the first time runners by comparing their average official time.
+
+Null Hypothesis: There is no difference in mean official times of first time and third time runners.
+
+Alternate Hypothesis: Mean official time of first time runners is greater than mean official time of third time runners.
+```{r, echo=FALSE}
+rem_runners.2017 <- bm_2017[!bm_2017$Bib %in% both1$Bib,]
+ztest95 = z.test(x=rem_runners.2017$Official.Time.Min,alternative = "greater" ,mu=mean(both1$Official.Time.Min), sigma.x = sd(both1$Official.Time.Min))
+ztest95
+```
+Since the p-value is less than alpha 0.05, we reject the null hypothesis. That means the average official time of third time runners is less than the first time runners. So, we can conclude that third time runners performance is better than the first time runners.
+
+# <span style="color:navy"> Conclusions and Next Steps </span>
+Our analysis shows:
+
+* Women’s finishing time is slower than men’s on average (228.9 vs 249.1 minutes), and women are younger than men on average (39.9 vs 44.8 years old).
+
+* The runners' relative performance each quarter of the race (your rank each quarter) impacts his final rank. The last quarter ranking (30-42.195 kilometer segment) affects the final rank the most.
+
+* If the runner's age falls at or below 50-54 age groups, age is not a factor in deciding the official time of the marathon. Overall, older runners tend to run slower. 
+
+* Massachusetts specifically and New England in general have slower average race times than other states.
+
+* With New England states removed, states with at least 60 runners have about the same average finishing time.
+
+* The runners in 30-34 age group were performing well compared to other age groups, in all the years (2015, 2016, and 2017).
+
+* Runners' average official times over the last three years were about the same.
+
+* Runners who ran both 2015 and 2016 Boston Marathon have better average official time compared to the first time runners in 2017.
+
+Our next steps include continuing to explore the same demographic variables (age, gender, home country/continent, home state, and past races (2015 and 2016)) with new independent variables created: duration in minutes each quarter or ranks each quarter. Our Anaylysis will address collinearity as we aim to adjust for certain other factors in the models. Additionally, we will also look at these findings across all three years of data accessible (2015, 2016 and 2017).
+
+As for the home state analysuis, there are several possible reasons for slower times from New England. The first is that more "charity racers" who did not need to earn their entry with a Boston Qualifying time are from the areas near the race. The other possibility is that many of these "hometown racers" did qualify, but choose to run at a slower or easier pace on race day. We could answer this question better if we knew who the charity racers were and had access to everyone's fastest marathon time in the last year.  
+
+Our questions continued to sharpen throughout this analysis process. What started out as a broad question would grow more pointed and focused as we continued to examine the data.  For example, at first we were just curious if Massachusetts was an outlier as a slow state, but additional analysis showed similar trends in other New England states. These realizations will forces us to expand the scope of analysis and look at a bigger picture as we further explore the dataset.
+
+
+# <span style="color:navy"> Bibliography </span>
+Marathon Statistics. (2019). Retrieved October 12, 2019, from https://findmymarathon.com/statistics.php.
+
+General Marathon Stats. (2019). Retrieved October 12, 2019, from https://marastats.com/marathon/.
+
+Timing and Scoring. (2019). Retrieved October 12, 2019, from https://www.baa.org/races/boston-marathon/enter/timing.
+
+Finishers Boston Marathon 2015, 2016 & 2017. (2017). Retrieved October 12, 2019, from https://www.kaggle.com/rojour/boston-results/kernels.
+
+Boston_results. (2017, March 18). Retrieved October 12, 2019, from https://github.com/rojour/boston_results.
+
+
+
+
+
+
+

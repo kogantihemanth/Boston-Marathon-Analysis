@@ -1,0 +1,217 @@
+---
+title: "Final, Section II"
+author: <span style="color:green">Team Why Axis?</span>
+date: <span style="color:green">10/9/2019</span>
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+#knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+loadPkg = function(x) { if (!require(x,character.only=T, quietly =T)) { install.packages(x,dep=T,repos="http://cran.us.r-project.org"); if(!require(x,character.only=T)) stop("Package not found") } }
+loadPkg('lubridate') # used from time conversions
+library(lubridate)
+loadPkg('dplyr') # varios data transfers
+library(dplyr)
+loadPkg('ggplot2') # plotting and mapping
+library(ggplot2)
+loadPkg("modelr") # building linear models
+library(modelr)
+loadPkg("faraway") # for calculating VIF
+library(faraway)
+```
+
+# <span style="color:navy"> Bib Clustering Analysis </span>
+
+## Background
+
+Bib numbers are unique numbers used to identify each runner before, during, and after the race.  During the race, the bib number is actually worn by the runner as a unique identifier.  In some races like the Boston Marathon, bib numbers are given out in batches and used to organize the waves in which runners start a race.  To make the start of a 26,000 person race more organized, the Boston Marathon in 2017 broke the runners into four, color-coded groups.  To determine what group (or wave) a runner would be in, the marathon organizers used previously sumbitted qualifying times, as detailed below. (http://registration.baa.org/2017/cf/Public/iframe_EntryLists.cfm)
+
+Red bibs (numbers 101 to 7,700) are assigned to Wave 1 (starting at 10:00 a.m.). White bibs (numbers 8,000 to 15,600) are assigned to Wave 2 (starting at 10:25 a.m.). Blue bibs (numbers 16,000 to 23,600) are assigned to Wave 3 (starting at 10:50 a.m.) Yellow bibs (numbers 24,000 to 32,500) are assigned to Wave 4 (starting at 11:15 a.m.). The break between Wave 1 and Wave 2 is a 3:10:43 marathon qualifying time. The break between Wave 2 and Wave 3 is a 3:29:27 marathon qualifying time. The break between Wave 3 and Wave 4 is a 3:57:18 marathon qualifying time.
+
+The question at hand is can we develop an unsupervised clustering model that accurately identifies these groupings without using the information from the above paragraph?  An additional question is can we confirm that the fourth group also includes runners who did not have to qualify for the marathon but instead or running for a charity group.
+
+```{r, echo=FALSE, include=FALSE}
+bm_2017 <- read.csv('marathon_results_2017.csv')
+str(bm_2017)
+```
+
+
+```{r}
+bm_2017$Official.Time <- as.character(bm_2017$Official.Time) # convert to charachter, the expected input for lubridate
+bm_2017$Official.Time.Min <- period_to_seconds(hms(bm_2017$Official.Time))/60 # divide by 60 to get 
+str(bm_2017)
+```
+
+## Data Cleaning and Exploration
+
+We first need to convert the bib number from a factor to an int.  We have to convert the factor to a charachter first though, because directly converting a factor to an int returns the underlying factor level, not the integer a factor may repersent.  
+
+Next, we can plot the finishing time against bib number and start to see several trends.  First, finishing times slowly yet steadily increase, supporting the theory that faster finishers get lower bib numbers.  Second, there are about four observable clusters, which match the waves organized by the Boston Marathon at the start.  Finally, the last group has much more variance within it, and far slower average finishing times.  These are likely the bib numbers of charity runners and other runners who did not need to qualify for the race.
+
+```{r, include=T, include=TRUE, message=FALSE}
+# To convert the bib number to anint, you have to first conver it to a charachter.
+# If you convert directly to numeric, you get the underlying facotr level, which is wrong.
+bm_2017$Bib_int <- as.numeric(as.character(bm_2017$Bib))
+bm_2017 <- na.omit(bm_2017)
+ggplot(bm_2017, aes(x=Bib_int, y=Official.Time.Min)) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Scatterplot of Bib Numbers vs. Finishing Time") 
+```
+
+This plot is rather dense, so lets use a density scatterplot to better see the distribution of the data.
+
+```{r, include=TRUE}
+# Bin size control + color palette
+ggplot(bm_2017, aes(x=bm_2017$Bib_int, y=bm_2017$Official.Time.Min)) +
+  geom_bin2d(bins = 150) +
+  scale_fill_continuous(type = "viridis") + theme_bw() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Density Scatteplot of Bib Numbers vs. Finishing Time") 
+```
+
+From the histogram below, we can see that there are some gaps from "unused" bib numbers or runners that did not finish the race.  The gap of unused bin numbers correlates to the breaks in the different wave groups, which has the added advantage of sharpening the edges of our clusters and hopefully making it easier for our model to successfully identify the correct groupings.
+
+```{r, include=T}
+ggplot(data = bm_2017, aes(Bib_int)) +
+  geom_histogram(col='blue',
+                 fill='lightblue', binwidth = 1000) +
+  labs(title='Histogram of Bib Numbers Finishing Race', x='Bib Number', y='Total Runners')
+
+```
+
+Now lets label the data with the right group names so we can compare our model's output.
+
+Red bibs (numbers 101 to 7,700) are assigned to Wave 1 (starting at 10:00 a.m.). White bibs (numbers 8,000 to 15,600) are assigned to Wave 2 (starting at 10:25 a.m.). Blue bibs (numbers 16,000 to 23,600) are assigned to Wave 3 (starting at 10:50 a.m.) Yellow bibs (numbers 24,000 to 32,500) are assigned to Wave 4 (starting at 11:15 a.m.). The break between Wave 1 and Wave 2 is a 3:10:43 marathon qualifying time. The break between Wave 2 and Wave 3 is a 3:29:27 marathon qualifying time. The break between Wave 3 and Wave 4 is a 3:57:18 marathon qualifying time.
+```{r}
+bm_2017 <- bm_2017 %>%
+    mutate(wave = case_when(Bib_int >= 1 & Bib_int <= 7700 ~ 1, # counting the "elites" in Wave 1
+                             Bib_int >= 8000 & Bib_int <= 15600 ~ 2,
+                             Bib_int >= 16000 & Bib_int <= 23600 ~ 3,
+                             Bib_int >= 24000 & Bib_int <= 32500 ~ 4))
+# covert the wave number into a factor
+bm_2017$wave <- as.factor(bm_2017$wave)
+
+# set color and numbers as lists for plotting specific colors to match wave numbers
+color.names <- c("red", "snow3", "blue", "yellow")
+wave.nums <- c(1,2,3,4)
+```
+
+```{r, include=TRUE}
+ggplot(bm_2017, aes(x=Bib_int, y=Official.Time.Min, col=wave)) + 
+  geom_point() +
+  scale_colour_manual(values=setNames(color.names, wave.nums)) +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Scatterplot of Bib Numbers vs. Finishing Time Colored by Wave") +
+  labs(color = "Wave Number")
+```
+
+
+## K-Means Clustering
+
+We can try K-means clustering to see if the algorithm can successfully identify the known clusters.  Since there are four known clusters, we will provide '4' as a parameter for the K-means algorithm.  Additionally, since K-means starts with a random division of elements, we will set the random seed at one and run K-means 20 times, keeping the most accurate model.
+
+```{r, include=TRUE}
+#k means, k=3
+#set.seed(1)
+bibs = as.data.frame(bm_2017$Bib_int)
+colnames(bibs) <- c('bib_int')
+bibs$time <- bm_2017$Official.Time.Min
+bibs <- na.omit(bibs)
+clusters <- kmeans(bibs, 4, nstart=20)
+
+# add the assigned clusters as a new column
+bibs$cluster_numb <- as.factor(clusters$cluster)
+
+# add the assigned aves as a new column
+bibs$wave_numb <- bm_2017$wave
+
+
+ggplot(bibs, aes(x=bib_int, y=time, col=cluster_numb)) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("K-Means Clustering with K=4, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+```
+
+As you can see in the above graph, K-means successfully identifes all four clusters and their break points perfectly.  This model works well here in part because of the breaks between the four clusters.
+
+## Hierarchical Clustering
+
+Now we'll look at the same data clustered using hierarchical clustering.  Whike K-means can be though of as a top-down clustering process, hierarchical clustering is a bottom-up approach.  At each iteration of hierarchical clustering, the two closest nodes are combined together until there is only one cluster left.  There are three different methods for hierarchical clustering which dictates how the individual clusters are combined at each level.  We will use the complete, average, and single methodology below and review the results.
+```{r, include=FALSE}
+#h clustering
+# NOTE: This block takes about 3-5 minutes to run.  The call to "gc()" will initiate garbage collection that clears up memory.  However, this might not work on some computers with limited amounts of RAM either because of its hardware or other open processes.
+gc()
+bibs = as.data.frame(bm_2017$Bib_int)
+colnames(bibs) <- c('bib_int')
+bibs$time <- bm_2017$Official.Time.Min
+bibs <- na.omit(bibs)
+hc_complete <- hclust(dist(bibs), method='complete')
+
+plot(hc_complete, main='Complete Method', xlab='Clusters', sub = '')
+```
+
+The dendrograms for the hierarchical clustering unsuprisingliy show symmetrical breaks for the 'average' method and pretty uneven clustering for the 'single' method, suggesting that the 'complete' method is most appropriate for the data we have.
+
+```{r, include=TRUE}
+# You can uncomment this block of code and get a comparison of all three trees.  However, this processing can take significant time depending on the computer.
+
+hc_average <- hclust(dist(bibs), method='average')
+hc_single <- hclust(dist(bibs), method='single')
+
+par(mfrow=c(1,3))
+plot(hc_complete, main='Complete Method', xlab='Clusters', sub = '')
+plot(hc_average, main='Average Method', xlab='Clusters', sub = '')
+plot(hc_single, main='Single Method', xlab='Clusters', sub = '')
+```
+
+Let's explore cutting the tree from hierarchal clustering using the complete method at different levels and see how the clusters align with our data.  We'll experiment with cutting at 3, 4, 5, and 9 cluster levels to see the results.
+
+```{r, include=T}
+bibs$cut_3 <- cutree(hc_complete, k=3)
+bibs$cut_4 <- cutree(hc_complete, k=4)
+bibs$cut_5 <- cutree(hc_complete, k=5)
+bibs$cut_9 <- cutree(hc_complete, k=9)
+
+ggplot(bibs, aes(x=bib_int, y=time, col=as.factor(cut_3))) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Hierarchical Clustering with K=3, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+
+ggplot(bibs, aes(x=bib_int, y=time, col=as.factor(cut_4))) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Hierarchical Clustering with K=4, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+
+ggplot(bibs, aes(x=bib_int, y=time, col=as.factor(cut_5))) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Hierarchical Clustering with K=5, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+
+ggplot(bibs, aes(x=bib_int, y=time, col=as.factor(cut_9))) + 
+  geom_point() +
+  xlab("Bib Number") + ylab("Finishing Times (minutes)") + 
+  ggtitle("Hierarchical Clustering with K=9, Bib Numbers vs. Finishing Time") +
+  labs(color = "Cluster Number")
+```
+
+It turns out that this method does a pretty good job of identifying the "charity runners" with higher bib numbers at when k= 3, 4, or 5, but doesn't do as well finding the break lines between the other groups when compared to K-means.  At higher levels, each larger cluster is just broken down to smaller and smaller clusters.
+
+## Conclusions
+
+From our analysis so far, the K-means clustering appears to be the best model for this problemset.  Because it is a top down approach that fits the data into the number of clusters provided as an input to the model, it does an effective job of successfully finding the break points for this data.  On the other hand, the hierarchical approach is less effective at identifying these break points because each successive level of hierarchical clustering is looking for the next nearest node, rather than taking the entire data into account.
+
